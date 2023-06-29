@@ -1,0 +1,47 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int        @id
+  firstName String
+  lastName  String?    @default("")
+  userName  String?    @default("")
+  email     String?    @default("")
+  isPremium Boolean?   @default(false)
+  trainings Training[]
+
+  @@map("users")
+}
+
+model Training {
+  id         Int      @id @default(autoincrement())
+  date       DateTime
+  members    User[]   @relation()
+  msg        Int?
+  maxMembers Int?
+
+  @@map("trainings")
+}
+
+model ConfigEvent {
+  chat_id     Int      @unique
+  coach_id    Int
+  day         String
+  time        String
+  max         Int
+  location    String
+  isForum     Boolean?
+  publish_day String
+  topic_id    Int?
+
+  @@map("configs")
+}
