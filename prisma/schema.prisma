@@ -11,29 +11,44 @@ datasource db {
 }
 
 model User {
-  id        Int        @id
+  id        Int              @id
   firstName String
-  lastName  String?    @default("")
-  userName  String?    @default("")
-  email     String?    @default("")
-  isPremium Boolean?   @default(false)
-  trainings Training[]
+  lastName  String?          @default("")
+  userName  String?          @default("")
+  email     String?          @default("")
+  isPremium Boolean?         @default(false)
+  member    TrainingMember[]
 
   @@map("users")
 }
 
-model Training {
+model TrainingMember {
   id         Int      @id @default(autoincrement())
-  date       DateTime
-  members    User[]   @relation()
+  userId     Int
+  trainingId Int
+  createdAt  Int
+  isInvited  Boolean
+  user       User     @relation(fields: [userId], references: [id])
+  training   Training @relation(fields: [trainingId], references: [id])
+
+  @@map("training_members")
+}
+
+model Training {
+  id         Int              @id @default(autoincrement())
+  date       Int
   msg        Int?
   maxMembers Int?
+  members    TrainingMember[]
+  configId   Int
+  config     ConfigEvent      @relation(fields: [configId], references: [id])
 
   @@map("trainings")
 }
 
 model ConfigEvent {
-  chat_id     Int      @unique
+  id          Int        @id @default(autoincrement())
+  chat_id     Int
   coach_id    Int
   day         String
   time        String
@@ -42,6 +57,7 @@ model ConfigEvent {
   isForum     Boolean?
   publish_day String
   topic_id    Int?
+  trainings   Training[]
 
   @@map("configs")
 }

@@ -8,31 +8,51 @@ export class ConfigService {
 
   async createConfig(data: Config) {
     try {
+      console.log(
+        `[CONFIG] Creating new config for chat: ${data.chat_id}, coach is: ${data.coach_id}`,
+      );
       const config = await this.prisma.configEvent.create({ data });
-      return config;
+      return config || {};
     } catch (e) {
+      console.error(e);
       throw new ForbiddenException('cannot create config');
     }
   }
 
   async getConfig() {
     try {
+      console.log('[CONFIG] Fetch all configs');
       const config = await this.prisma.configEvent.findMany();
-      return config;
+      return config || {};
     } catch (e) {
+      console.error(e);
       throw new ForbiddenException('cannot get config');
     }
   }
 
   async updateConfig(data: Config) {
     try {
+      console.log(`[CONFIG] Update config by id: ${data.id}`);
       const config = await this.prisma.configEvent.update({
-        where: { chat_id: data.chat_id, day: data.day },
+        where: { id: data.id },
         data,
       });
-      return config;
+      return config || {};
     } catch (e) {
+      console.error(e);
       throw new ForbiddenException('cannot update config');
+    }
+  }
+
+  async deleteConfig(id: number) {
+    try {
+      console.log(`[CONFIG] Delete config by id: ${id}`);
+      await this.prisma.configEvent.delete({
+        where: { id },
+      });
+    } catch (e) {
+      console.error(e);
+      throw new ForbiddenException('cannot delete config');
     }
   }
 }

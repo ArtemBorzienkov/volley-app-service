@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Req, Param } from '@nestjs/common';
+import { Controller, Get, Post, Put, Req, Delete, Query } from '@nestjs/common';
 import { ConfigService } from './config.service';
 import { Request } from 'express';
 
@@ -18,14 +18,11 @@ export class ConfigController {
 
   @Put()
   updateConfig(@Req() req: Request) {
-    console.log(
-      'req.params',
-      req.params,
-      'req.query',
-      req.query,
-      'req.body',
-      req.body,
-    );
-    // return this.configService.updateConfig();
+    return this.configService.updateConfig(req.body);
+  }
+
+  @Delete()
+  deleteConfig(@Query() query: { id: string }) {
+    return this.configService.deleteConfig(Number(query.id));
   }
 }
