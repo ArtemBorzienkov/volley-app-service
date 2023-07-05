@@ -36,15 +36,15 @@ jobs:
         push: true
         tags: artemborzienkov/volley-app-service:${{ github.run_id }}
         
-    # - name: Deploy and run new image to digital ocean
-    #   uses: appleboy/ssh-action@master
-    #   with:
-    #     host: ${{ secrets.DO_HOST_IP }}
-    #     username: root
-    #     key: ${{ secrets.DO_HOST_PRIVATE_KEY }}
-    #     script: |
-    #       echo SUCCESS_LOGIN &&
-    #       docker stop volley-app &&
-    #       docker rm volley-app &&
-    #       docker pull artemborzienkov/volley-app:${{ github.run_id }} &&
-    #       docker run -d --name volley-app -e NODE_ENV=prod -e BOT_TOKEN=${{ secrets.BOT_TOKEN_PROD }} -e API_URL=${{ secrets.API_URL }} artemborzienkov/volley-app:${{ github.run_id }}
+    - name: Deploy and run new image to digital ocean
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.DO_HOST_IP }}
+        username: root
+        key: ${{ secrets.DO_HOST_PRIVATE_KEY }}
+        script: |
+          echo SUCCESS_LOGIN &&
+          docker stop volley-app-service &&
+          docker rm volley-app-service &&
+          docker pull artemborzienkov/volley-app-service:${{ github.run_id }} &&
+          docker run -d --name volley-app-service -p 3000:3000 -e NODE_ENV=prod -e DATABASE_URL=postgresql://${{ secrets.DB_PASSWORD}}:${{ secrets.DB_USER}}@${{ secrets.DO_HOST_IP }}:5432/postgres?schema=public artemborzienkov/volley-app-service:${{ github.run_id }}
