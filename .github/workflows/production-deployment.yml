@@ -5,7 +5,7 @@ on:
     branches: [ "main" ]
 
 jobs:
-
+#docker run -d --name volley-app-service -p 3000:3000 -e NODE_ENV=prod -e DATABASE_URL=postgresql://${{ secrets.DB_PASSWORD}}:${{ secrets.DB_USER}}@${{ secrets.DO_HOST_IP }}:5432/postgres?schema=public artemborzienkov/volley-app-service:${{ github.run_id }}
   build:
 
     runs-on: ubuntu-latest
@@ -41,10 +41,9 @@ jobs:
       with:
         host: ${{ secrets.DO_HOST_IP }}
         username: root
-        key: ${{ secrets.DO_HOST_PUB_KEY }}
+        key: ${{ secrets.DO_HOST_PRIVATE_KEY }}
         script: |
           echo SUCCESS_LOGIN &&
           docker stop volley-app-service &&
           docker rm volley-app-service &&
-          docker pull artemborzienkov/volley-app-service:${{ github.run_id }} &&
-          docker run -d --name volley-app-service -p 3000:3000 -e NODE_ENV=prod -e DATABASE_URL=postgresql://${{ secrets.DB_PASSWORD}}:${{ secrets.DB_USER}}@${{ secrets.DO_HOST_IP }}:5432/postgres?schema=public artemborzienkov/volley-app-service:${{ github.run_id }}
+          docker pull artemborzienkov/volley-app-service:${{ github.run_id }}
