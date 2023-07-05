@@ -41,7 +41,7 @@ jobs:
       with:
         host: ${{ secrets.DO_HOST_IP }}
         username: root
-        key: ${{ secrets.DO_HOST_PRIVATE_KEY }}
+        key: ${{ secrets.DO_HOST_PUB_KEY }}
         script: |
           echo SUCCESS_LOGIN &&
           docker stop volley-app-service &&
