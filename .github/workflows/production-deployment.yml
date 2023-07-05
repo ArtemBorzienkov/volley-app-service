@@ -1,0 +1,50 @@
+name: production deployment
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Start deployment
+      run: echo ${{ github.run_id }}
+
+    - name: Checkout
+      uses: actions/checkout@v3
+    
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v2
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+    
+    - name: Login to Docker Hub
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+  
+    - name: Build and push build to registry
+      uses: docker/build-push-action@v4
+      with:
+        context: .
+        push: true
+        tags: artemborzienkov/volley-app-service:${{ github.run_id }}
+        
+    # - name: Deploy and run new image to digital ocean
+    #   uses: appleboy/ssh-action@master
+    #   with:
+    #     host: ${{ secrets.DO_HOST_IP }}
+    #     username: root
+    #     key: ${{ secrets.DO_HOST_PRIVATE_KEY }}
+    #     script: |
+    #       echo SUCCESS_LOGIN &&
+    #       docker stop volley-app &&
+    #       docker rm volley-app &&
+    #       docker pull artemborzienkov/volley-app:${{ github.run_id }} &&
+    #       docker run -d --name volley-app -e NODE_ENV=prod -e BOT_TOKEN=${{ secrets.BOT_TOKEN_PROD }} -e API_URL=${{ secrets.API_URL }} artemborzienkov/volley-app:${{ github.run_id }}
