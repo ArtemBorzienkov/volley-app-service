@@ -1,6 +1,6 @@
 export interface Config {
   id?: number;
-  chat_id: number;
+  chat_id: string;
   coach_id: number;
   day: string;
   time: string;
