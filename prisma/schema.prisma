@@ -48,7 +48,7 @@ model Training {
 
 model ConfigEvent {
   id          Int        @id @default(autoincrement())
-  chat_id     Int
+  chat_id     String
   coach_id    Int
   day         String
   time        String
