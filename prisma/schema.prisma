@@ -40,15 +40,14 @@ model Training {
   msg        Int?
   maxMembers Int?
   members    TrainingMember[]
-  configId   Int
-  config     ConfigEvent      @relation(fields: [configId], references: [id])
+  configId   String
+  config     ConfigEvent      @relation(fields: [configId], references: [chat_id])
 
   @@map("trainings")
 }
 
 model ConfigEvent {
-  id          Int        @id @default(autoincrement())
-  chat_id     String
+  chat_id     String     @id
   coach_id    Int
   day         String
   time        String
