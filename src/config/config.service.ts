@@ -11,7 +11,12 @@ export class ConfigService {
       console.log(
         `[CONFIG] Creating new config for chat: ${data.chat_id}, coach is: ${data.coach_id}`,
       );
-      const config = await this.prisma.configEvent.create({ data });
+      let config = [];
+      config = await this.getConfigsByCoachId(data.coach_id);
+      if (config.length === 0) {
+        const newConfig = await this.prisma.configEvent.create({ data });
+        config = [newConfig];
+      }
       return config || {};
     } catch (e) {
       console.error(e);
@@ -19,11 +24,13 @@ export class ConfigService {
     }
   }
 
-  async getConfig() {
+  async getConfigsByCoachId(id: number): Promise<Config[]> {
     try {
       console.log('[CONFIG] Fetch all configs');
-      const config = await this.prisma.configEvent.findMany();
-      return config || {};
+      const config = (await this.prisma.configEvent.findMany({
+        where: { coach_id: id },
+      })) as Config[];
+      return config || [];
     } catch (e) {
       console.error(e);
       throw new ForbiddenException('cannot get config');
@@ -34,7 +41,7 @@ export class ConfigService {
     try {
       console.log(`[CONFIG] Update config by id: ${data.id}`);
       const config = await this.prisma.configEvent.update({
-        where: { id: data.id },
+        where: { chat_id: data.chat_id },
         data,
       });
       return config || {};
@@ -44,11 +51,11 @@ export class ConfigService {
     }
   }
 
-  async deleteConfig(id: number) {
+  async deleteConfig(chat_id: string) {
     try {
-      console.log(`[CONFIG] Delete config by id: ${id}`);
+      console.log(`[CONFIG] Delete config by id: ${chat_id}`);
       await this.prisma.configEvent.delete({
-        where: { id },
+        where: { chat_id },
       });
     } catch (e) {
       console.error(e);

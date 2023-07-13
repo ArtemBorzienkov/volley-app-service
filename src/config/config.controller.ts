@@ -12,8 +12,8 @@ export class ConfigController {
   }
 
   @Get()
-  getConfig() {
-    return this.configService.getConfig();
+  getConfigByCoachId(@Query() query: { id: string }) {
+    return this.configService.getConfigsByCoachId(Number(query.id));
   }
 
   @Put()
@@ -23,6 +23,6 @@ export class ConfigController {
 
   @Delete()
   deleteConfig(@Query() query: { id: string }) {
-    return this.configService.deleteConfig(Number(query.id));
+    return this.configService.deleteConfig(query.id);
   }
 }

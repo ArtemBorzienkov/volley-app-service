@@ -22,7 +22,7 @@ export interface User {
 
 export interface Training {
   id?: number;
-  configId: number;
+  configId: string;
   date: number;
   msg?: number;
   maxMembers?: number;
