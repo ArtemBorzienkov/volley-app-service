@@ -48,6 +48,7 @@ model Training {
 
 model ConfigEvent {
   chat_id     String     @id
+  chat_title  String
   coach_id    Int
   day         String
   time        String

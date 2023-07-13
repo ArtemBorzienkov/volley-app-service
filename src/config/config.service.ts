@@ -39,7 +39,7 @@ export class ConfigService {
 
   async updateConfig(data: Config) {
     try {
-      console.log(`[CONFIG] Update config by id: ${data.id}`);
+      console.log(`[CONFIG] Update config by id: ${data.chat_id}`);
       const config = await this.prisma.configEvent.update({
         where: { chat_id: data.chat_id },
         data,
