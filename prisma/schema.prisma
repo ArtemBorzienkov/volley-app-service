@@ -41,13 +41,14 @@ model Training {
   maxMembers Int?
   members    TrainingMember[]
   configId   String
-  config     ConfigEvent      @relation(fields: [configId], references: [chat_id])
+  config     ConfigEvent      @relation(fields: [configId], references: [id])
 
   @@map("trainings")
 }
 
 model ConfigEvent {
-  chat_id     String     @id
+  id          String     @id
+  chat_id     String
   chat_title  String
   coach_id    Int
   day         String

@@ -2,6 +2,8 @@ import { ForbiddenException, Injectable } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Config } from 'src/utils/types';
 
+const uniqid = require('uniqid');
+
 @Injectable({})
 export class ConfigService {
   constructor(private prisma: PrismaService) {}
@@ -11,13 +13,10 @@ export class ConfigService {
       console.log(
         `[CONFIG] Creating new config for chat: ${data.chat_id}, coach is: ${data.coach_id}`,
       );
-      let config = [];
-      config = await this.getConfigsByCoachId(data.coach_id);
-      if (config.length === 0) {
-        const newConfig = await this.prisma.configEvent.create({ data });
-        config = [newConfig];
-      }
-      return config || {};
+      const newConfig = await this.prisma.configEvent.create({
+        data: { ...data, id: uniqid() },
+      });
+      return newConfig;
     } catch (e) {
       console.error(e);
       throw new ForbiddenException('cannot create config');
@@ -26,7 +25,7 @@ export class ConfigService {
 
   async getConfigsByCoachId(id: number): Promise<Config[]> {
     try {
-      console.log('[CONFIG] Fetch all configs');
+      console.log('[CONFIG] Get config by coach_id');
       const config = (await this.prisma.configEvent.findMany({
         where: { coach_id: id },
       })) as Config[];
@@ -39,9 +38,9 @@ export class ConfigService {
 
   async updateConfig(data: Config) {
     try {
-      console.log(`[CONFIG] Update config by id: ${data.chat_id}`);
+      console.log(`[CONFIG] Update config by id: ${data.id}`);
       const config = await this.prisma.configEvent.update({
-        where: { chat_id: data.chat_id },
+        where: { id: data.id },
         data,
       });
       return config || {};
@@ -51,11 +50,11 @@ export class ConfigService {
     }
   }
 
-  async deleteConfig(chat_id: string) {
+  async deleteConfig(id: string) {
     try {
-      console.log(`[CONFIG] Delete config by id: ${chat_id}`);
+      console.log(`[CONFIG] Delete config by id: ${id}`);
       await this.prisma.configEvent.delete({
-        where: { chat_id },
+        where: { id },
       });
     } catch (e) {
       console.error(e);
