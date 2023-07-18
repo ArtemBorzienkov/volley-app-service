@@ -50,11 +50,23 @@ export class ConfigService {
     }
   }
 
-  async deleteConfig(id: string) {
+  async deleteConfigById(id: string) {
     try {
       console.log(`[CONFIG] Delete config by id: ${id}`);
       await this.prisma.configEvent.delete({
         where: { id },
+      });
+    } catch (e) {
+      console.error(e);
+      throw new ForbiddenException('cannot delete config');
+    }
+  }
+
+  async deleteConfigByChatId(chat_id: string) {
+    try {
+      console.log(`[CONFIG] Delete configs by chat_id: ${chat_id}`);
+      await this.prisma.configEvent.deleteMany({
+        where: { chat_id },
       });
     } catch (e) {
       console.error(e);
