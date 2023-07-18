@@ -22,7 +22,9 @@ export class ConfigController {
   }
 
   @Delete()
-  deleteConfig(@Query() query: { id: string }) {
-    return this.configService.deleteConfig(query.id);
+  deleteConfig(@Query() query: { id: string; chat_id: string }) {
+    return query.chat_id
+      ? this.configService.deleteConfigByChatId(query.chat_id)
+      : this.configService.deleteConfigById(query.id);
   }
 }
