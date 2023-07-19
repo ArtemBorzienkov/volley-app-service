@@ -33,6 +33,7 @@ export interface TrainingMember {
   id: number;
   userId: number;
   trainingId: number;
+  name: string;
   createdAt: number;
   isInvited: boolean;
 }
