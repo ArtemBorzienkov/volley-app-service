@@ -26,6 +26,7 @@ model TrainingMember {
   id         Int      @id @default(autoincrement())
   userId     Int
   trainingId Int
+  name       String
   createdAt  Int
   isInvited  Boolean
   user       User     @relation(fields: [userId], references: [id])
