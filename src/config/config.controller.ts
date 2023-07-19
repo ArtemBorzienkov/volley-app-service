@@ -13,7 +13,9 @@ export class ConfigController {
 
   @Get()
   getConfigByCoachId(@Query() query: { id: string }) {
-    return this.configService.getConfigsByCoachId(Number(query.id));
+    return query.id
+      ? this.configService.getConfigsByCoachId(Number(query.id))
+      : this.configService.getAllConfigs();
   }
 
   @Put()
