@@ -34,13 +34,13 @@ model TrainingMember {
 }
 
 model Training {
-  id         Int              @id @default(autoincrement())
-  date       String
-  msg        Int?
-  maxMembers Int?
-  members    TrainingMember[]
-  configId   String
-  config     ConfigEvent      @relation(fields: [configId], references: [id])
+  id               Int              @id @default(autoincrement())
+  date             String
+  msg              Int?
+  maxMembers       Int?
+  training_members TrainingMember[]
+  configId         String
+  config           ConfigEvent      @relation(fields: [configId], references: [id])
 
   @@map("trainings")
 }
