@@ -11,13 +11,12 @@ datasource db {
 }
 
 model User {
-  id        Int              @id
+  id        Int      @id
   firstName String
-  lastName  String?          @default("")
-  userName  String?          @default("")
-  email     String?          @default("")
-  isPremium Boolean?         @default(false)
-  member    TrainingMember[]
+  lastName  String?  @default("")
+  userName  String?  @default("")
+  email     String?  @default("")
+  isPremium Boolean? @default(false)
 
   @@map("users")
 }
@@ -29,7 +28,6 @@ model TrainingMember {
   name       String
   createdAt  Int
   isInvited  Boolean
-  user       User     @relation(fields: [userId], references: [id])
   training   Training @relation(fields: [trainingId], references: [id])
 
   @@map("training_members")
