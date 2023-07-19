@@ -23,6 +23,17 @@ export class ConfigService {
     }
   }
 
+  async getAllConfigs(): Promise<Config[]> {
+    try {
+      console.log('[CONFIG] Get all configs');
+      const config = (await this.prisma.configEvent.findMany()) as Config[];
+      return config || [];
+    } catch (e) {
+      console.error(e);
+      throw new ForbiddenException('cannot get all configs');
+    }
+  }
+
   async getConfigsByCoachId(id: number): Promise<Config[]> {
     try {
       console.log('[CONFIG] Get config by coach_id');
