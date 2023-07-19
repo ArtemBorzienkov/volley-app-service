@@ -24,7 +24,7 @@ export interface User {
 export interface Training {
   id?: number;
   configId: string;
-  date: number;
+  date: string;
   msg?: number;
   maxMembers?: number;
 }

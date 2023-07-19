@@ -36,7 +36,7 @@ model TrainingMember {
 
 model Training {
   id         Int              @id @default(autoincrement())
-  date       Int
+  date       String
   msg        Int?
   maxMembers Int?
   members    TrainingMember[]
