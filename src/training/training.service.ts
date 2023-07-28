@@ -18,4 +18,29 @@ export class TrainingService {
       throw new ForbiddenException('cannot create training');
     }
   }
+
+  async getTraining(id: number) {
+    try {
+      console.log(`[TRAINING] Get training by id: ${id}`);
+      const training = await this.prisma.training.findUnique({ where: { id } });
+      return training || {};
+    } catch (e) {
+      console.error(e);
+      throw new ForbiddenException('cannot get training');
+    }
+  }
+
+  async updateTraining(data: Training) {
+    try {
+      console.log(`[TRAINING] Update training by id: ${data.id}`);
+      const training = await this.prisma.training.update({
+        where: { id: data.id },
+        data,
+      });
+      return training || {};
+    } catch (e) {
+      console.error(e);
+      throw new ForbiddenException('cannot update training');
+    }
+  }
 }
