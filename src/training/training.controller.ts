@@ -1,4 +1,4 @@
-import { Controller, Post, Req } from '@nestjs/common';
+import { Controller, Post, Req, Get, Query, Put } from '@nestjs/common';
 import { Request } from 'express';
 import { TrainingService } from './training.service';
 
@@ -9,5 +9,15 @@ export class TrainingController {
   @Post()
   createTraining(@Req() req: Request) {
     return this.trainingService.createTraining(req.body);
+  }
+
+  @Get()
+  getTraining(@Query() query: { id: string }) {
+    return this.trainingService.getTraining(Number(query.id));
+  }
+
+  @Put()
+  updateTraining(@Req() req: Request) {
+    return this.trainingService.updateTraining(req.body);
   }
 }
