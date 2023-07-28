@@ -37,13 +37,18 @@ export class MemberService {
     }
   }
 
-  async deleteMember(id: number): Promise<TrainingMember[]> {
+  async deleteMember(
+    userId: number,
+    trainingId: number,
+  ): Promise<TrainingMember[]> {
     try {
-      console.log(`[MEMBER] Delete member by id: ${id}`);
-      const memberToRemove = await this.prisma.trainingMember.findUnique({
-        where: { id },
+      console.log(`[MEMBER] Delete member by user_id: ${userId}`);
+      const memberToRemove = await this.prisma.trainingMember.findFirst({
+        where: { userId, trainingId },
       });
-      await this.prisma.trainingMember.delete({ where: { id } });
+      await this.prisma.trainingMember.deleteMany({
+        where: { userId, trainingId },
+      });
       const members = this.getMembersByTrainId(memberToRemove.trainingId);
       return members || [];
     } catch (e) {
