@@ -6,13 +6,16 @@ import { TrainingMember } from 'src/utils/types';
 export class MemberService {
   constructor(private prisma: PrismaService) {}
 
-  async createMember(data: TrainingMember) {
+  async createMember(data: TrainingMember[]) {
     try {
+      if (!data || data.length === 0) {
+        return [];
+      }
       console.log(
-        `[MEMBER] Creating new member by user: ${data.userId} for training ${data.trainingId}`,
+        `[MEMBER] Creating new member by user: ${data[0].userId} for training ${data[0].trainingId}`,
       );
-      const member = await this.prisma.trainingMember.create({ data });
-      return member || {};
+      const member = await this.prisma.trainingMember.createMany({ data });
+      return member || [];
     } catch (e) {
       console.error(e);
       throw new ForbiddenException('cannot create training');
