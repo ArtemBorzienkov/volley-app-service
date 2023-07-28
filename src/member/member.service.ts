@@ -6,27 +6,46 @@ import { TrainingMember } from 'src/utils/types';
 export class MemberService {
   constructor(private prisma: PrismaService) {}
 
-  async createMember(data: TrainingMember[]) {
+  async createMember(data: TrainingMember[]): Promise<TrainingMember[]> {
     try {
       if (!data || data.length === 0) {
         return [];
       }
+      const rootMemb = data[0];
       console.log(
-        `[MEMBER] Creating new member by user: ${data[0].userId} for training ${data[0].trainingId}`,
+        `[MEMBER] Creating new member by user: ${rootMemb.userId} for training ${rootMemb.trainingId}`,
       );
-      const member = await this.prisma.trainingMember.createMany({ data });
-      return member || [];
+      await this.prisma.trainingMember.createMany({ data });
+      const members = this.getMembersByTrainId(rootMemb.trainingId);
+      return members || [];
     } catch (e) {
       console.error(e);
       throw new ForbiddenException('cannot create training');
     }
   }
 
-  async deleteMember(id: number) {
+  async getMembersByTrainId(trainingId: number): Promise<TrainingMember[]> {
+    try {
+      console.log(`[MEMBER] Get members by train_id: ${trainingId}`);
+      const members = await this.prisma.trainingMember.findMany({
+        where: { trainingId },
+      });
+      return members || [];
+    } catch (e) {
+      console.error(e);
+      throw new ForbiddenException('cannot create training');
+    }
+  }
+
+  async deleteMember(id: number): Promise<TrainingMember[]> {
     try {
       console.log(`[MEMBER] Delete member by id: ${id}`);
-      const member = await this.prisma.trainingMember.delete({ where: { id } });
-      return member || {};
+      const memberToRemove = await this.prisma.trainingMember.findUnique({
+        where: { id },
+      });
+      await this.prisma.trainingMember.delete({ where: { id } });
+      const members = this.getMembersByTrainId(memberToRemove.trainingId);
+      return members || [];
     } catch (e) {
       console.error(e);
       throw new ForbiddenException('cannot create training');
