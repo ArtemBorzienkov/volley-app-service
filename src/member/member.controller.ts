@@ -1,4 +1,4 @@
-import { Controller, Delete, Post, Query, Req } from '@nestjs/common';
+import { Controller, Delete, Get, Post, Query, Req } from '@nestjs/common';
 import { Request } from 'express';
 import { MemberService } from './member.service';
 
@@ -9,6 +9,11 @@ export class MemberController {
   @Post()
   createMember(@Req() req: Request) {
     return this.memberService.createMember(req.body);
+  }
+
+  @Get()
+  getMembersByTrainingId(@Query() query: { training_id: string }) {
+    return this.memberService.getMembersByTrainId(Number(query.training_id));
   }
 
   @Delete()
