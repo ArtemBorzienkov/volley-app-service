@@ -24,6 +24,7 @@ export interface User {
 export interface Training {
   id?: number;
   configId: string;
+  coachId: string;
   date: string;
   msg?: number;
   maxMembers?: number;
