@@ -26,7 +26,7 @@ model TrainingMember {
   userId     Int
   trainingId Int
   name       String
-  createdAt  BigInt
+  createdAt  Int
   isInvited  Boolean
   training   Training @relation(fields: [trainingId], references: [id])
 
