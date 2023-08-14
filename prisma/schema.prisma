@@ -11,7 +11,7 @@ datasource db {
 }
 
 model User {
-  id        Int      @id
+  id        String   @id
   firstName String
   lastName  String?  @default("")
   userName  String?  @default("")
@@ -23,7 +23,7 @@ model User {
 
 model TrainingMember {
   id         String   @id
-  userId     Int
+  userId     String
   trainingId String
   name       String
   createdAt  Int
@@ -50,7 +50,7 @@ model ConfigEvent {
   id          String     @id
   chat_id     String
   chat_title  String
-  coach_id    Int
+  coach_id    String
   day         String
   time        String
   max         Int

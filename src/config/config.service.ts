@@ -34,7 +34,7 @@ export class ConfigService {
     }
   }
 
-  async getConfigsByCoachId(id: number): Promise<Config[]> {
+  async getConfigsByCoachId(id: string): Promise<Config[]> {
     try {
       console.log('[CONFIG] Get config by coach_id');
       const config = (await this.prisma.configEvent.findMany({
