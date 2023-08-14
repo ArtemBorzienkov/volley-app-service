@@ -13,14 +13,14 @@ export class MemberController {
 
   @Get()
   getMembersByTrainingId(@Query() query: { training_id: string }) {
-    return this.memberService.getMembersByTrainId(Number(query.training_id));
+    return this.memberService.getMembersByTrainId(query.training_id);
   }
 
   @Delete()
   deleteMember(@Query() query: { user_id: string; training_id: string }) {
     return this.memberService.deleteMember(
       Number(query.user_id),
-      Number(query.training_id),
+      query.training_id,
     );
   }
 }

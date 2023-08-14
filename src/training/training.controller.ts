@@ -13,7 +13,7 @@ export class TrainingController {
 
   @Get()
   getTraining(@Query() query: { id: string }) {
-    return this.trainingService.getTraining(Number(query.id));
+    return this.trainingService.getTraining(query.id);
   }
 
   @Put()
