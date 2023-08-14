@@ -13,7 +13,7 @@ export class UserController {
 
   @Get()
   getConfig(@Query() query: { id: string }) {
-    return this.userService.getUserById(Number(query.id));
+    return this.userService.getUserById(query.id);
   }
 
   @Put()
@@ -23,6 +23,6 @@ export class UserController {
 
   @Delete()
   deleteConfig(@Query() query: { id: string }) {
-    return this.userService.deleteUser(Number(query.id));
+    return this.userService.deleteUser(query.id);
   }
 }

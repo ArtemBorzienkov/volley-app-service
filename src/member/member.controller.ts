@@ -18,9 +18,6 @@ export class MemberController {
 
   @Delete()
   deleteMember(@Query() query: { user_id: string; training_id: string }) {
-    return this.memberService.deleteMember(
-      Number(query.user_id),
-      query.training_id,
-    );
+    return this.memberService.deleteMember(query.user_id, query.training_id);
   }
 }

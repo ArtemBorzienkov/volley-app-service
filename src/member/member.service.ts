@@ -38,7 +38,7 @@ export class MemberService {
   }
 
   async deleteMember(
-    userId: number,
+    userId: string,
     trainingId: string,
   ): Promise<TrainingMember[]> {
     try {

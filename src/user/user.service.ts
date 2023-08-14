@@ -20,7 +20,7 @@ export class UserService {
     }
   }
 
-  async getUserById(id: number): Promise<User> {
+  async getUserById(id: string): Promise<User> {
     try {
       console.log(`[USER] Fetch user by id: ${id}`);
       const user = await this.prisma.user.findUnique({ where: { id } });
@@ -45,7 +45,7 @@ export class UserService {
     }
   }
 
-  async deleteUser(id: number) {
+  async deleteUser(id: string) {
     try {
       console.log(`[USER] Delete user by id: ${id}`);
       await this.prisma.user.delete({
