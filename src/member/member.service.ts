@@ -29,6 +29,9 @@ export class MemberService {
       console.log(`[MEMBER] Get members by train_id: ${trainingId}`);
       const members = await this.prisma.trainingMember.findMany({
         where: { trainingId },
+        orderBy: {
+          createdAt: 'asc',
+        },
       });
       return members || [];
     } catch (e) {
