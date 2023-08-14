@@ -24,7 +24,7 @@ export class MemberService {
     }
   }
 
-  async getMembersByTrainId(trainingId: number): Promise<TrainingMember[]> {
+  async getMembersByTrainId(trainingId: string): Promise<TrainingMember[]> {
     try {
       console.log(`[MEMBER] Get members by train_id: ${trainingId}`);
       const members = await this.prisma.trainingMember.findMany({
@@ -39,7 +39,7 @@ export class MemberService {
 
   async deleteMember(
     userId: number,
-    trainingId: number,
+    trainingId: string,
   ): Promise<TrainingMember[]> {
     try {
       console.log(`[MEMBER] Delete member by user_id: ${userId}`);

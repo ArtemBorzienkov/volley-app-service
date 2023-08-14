@@ -19,7 +19,7 @@ export class TrainingService {
     }
   }
 
-  async getTraining(id: number) {
+  async getTraining(id: string) {
     try {
       console.log(`[TRAINING] Get training by id: ${id}`);
       const training = await this.prisma.training.findUnique({ where: { id } });

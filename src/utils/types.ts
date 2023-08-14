@@ -1,5 +1,5 @@
 export interface Config {
-  id?: string;
+  id: string;
   chat_id: string;
   chat_title: string;
   coach_id: number;
@@ -22,7 +22,7 @@ export interface User {
 }
 
 export interface Training {
-  id?: number;
+  id: string;
   configId: string;
   coachId: string;
   date: string;
@@ -31,9 +31,9 @@ export interface Training {
 }
 
 export interface TrainingMember {
-  id: number;
+  id: string;
   userId: number;
-  trainingId: number;
+  trainingId: string;
   name: string;
   createdAt: number;
   isInvited: boolean;

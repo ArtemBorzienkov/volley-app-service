@@ -22,9 +22,9 @@ model User {
 }
 
 model TrainingMember {
-  id         Int      @id @default(autoincrement())
+  id         String   @id
   userId     Int
-  trainingId Int
+  trainingId String
   name       String
   createdAt  Int
   isInvited  Boolean
@@ -34,7 +34,7 @@ model TrainingMember {
 }
 
 model Training {
-  id               Int              @id @default(autoincrement())
+  id               String           @id
   coachId          String
   date             String
   msg              Int?
