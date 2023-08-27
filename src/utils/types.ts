@@ -10,6 +10,8 @@ export interface Config {
   isForum: boolean;
   publish_day: string;
   topic_id: number;
+  active: boolean;
+  repeatable: boolean;
 }
 
 export interface User {
