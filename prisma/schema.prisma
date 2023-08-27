@@ -58,7 +58,18 @@ model ConfigEvent {
   isForum     Boolean?
   publish_day String
   topic_id    Int?
+  active      Boolean    @default(true)
+  repeatable  Boolean    @default(true)
   trainings   Training[]
 
   @@map("configs")
+}
+
+model Group {
+  chat_id    String   @id
+  chat_title String
+  coach_id   String
+  isForum    Boolean?
+
+  @@map("groups")
 }
