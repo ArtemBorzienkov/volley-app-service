@@ -38,3 +38,10 @@ export interface TrainingMember {
   createdAt: number;
   isInvited: boolean;
 }
+
+export interface Group {
+  chat_id: string;
+  chat_title: string;
+  coach_id: string;
+  isForum?: boolean;
+}

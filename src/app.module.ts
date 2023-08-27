@@ -8,6 +8,8 @@ import { UserController } from './user/user.controller';
 import { UserService } from './user/user.service';
 import { MemberController } from './member/member.controller';
 import { MemberService } from './member/member.service';
+import { GroupController } from './group/group.controller';
+import { GroupService } from './group/group.service';
 
 @Module({
   imports: [],
@@ -16,6 +18,7 @@ import { MemberService } from './member/member.service';
     TrainingController,
     UserController,
     MemberController,
+    GroupController,
   ],
   providers: [
     ConfigService,
@@ -23,6 +26,7 @@ import { MemberService } from './member/member.service';
     PrismaService,
     UserService,
     MemberService,
+    GroupService,
   ],
 })
 export class AppModule {}
