@@ -4,6 +4,8 @@ import { PlayersModule } from './players/players.module';
 import { EventsModule } from './events/events.module';
 import { GamesModule } from './games/games.module';
 import { EventMembersModule } from './event-members/event-members.module';
+import { StatisticsModule } from './statistics/statistics.module';
+import { RankingsModule } from './rankings/rankings.module';
 
 @Module({
   imports: [
@@ -12,6 +14,8 @@ import { EventMembersModule } from './event-members/event-members.module';
     EventsModule,
     GamesModule,
     EventMembersModule,
+    StatisticsModule,
+    RankingsModule,
   ],
   controllers: [],
   providers: [],
