@@ -1,0 +1,327 @@
+✅ v0 prompt
+
+Build a modern responsive web application for managing and analyzing beach volleyball tournaments and player statistics.
+
+🏐 Domain description
+
+The system has the following core entities (based on Prisma schema):
+
+⸻
+
+Players
+	•	Beach volleyball players
+	•	Fields:
+	•	id (UUID)
+	•	tgId (optional, unique Telegram ID)
+	•	name
+	•	avatar (optional)
+	•	gender (optional)
+	•	active (boolean, default: true)
+	•	totalGames (default: 0)
+	•	totalWins (default: 0)
+	•	totalLosses (default: 0)
+	•	createdAt, updatedAt
+
+⸻
+
+Events (Tournaments)
+	•	Event = competition within which games are played
+	•	Fields:
+	•	id (UUID)
+	•	name
+	•	date (DateTime - single date with timestamp)
+	•	createdBy (foreign key to Player.id)
+	•	location (optional)
+	•	createdAt, updatedAt
+	•	Relations:
+	•	games (one-to-many)
+	•	eventMembers (one-to-many)
+	•	creator (many-to-one with Player)
+
+⸻
+
+Games
+	•	Each game:
+	•	consists of two teams
+	•	each team has exactly two players
+	•	Fields:
+	•	id (UUID)
+	•	eventId (foreign key to Event.id)
+	•	team1Player1Id, team1Player2Id (foreign keys to Player.id)
+	•	team2Player1Id, team2Player2Id (foreign keys to Player.id)
+	•	team1Sets, team2Sets (Int, default: 0)
+	•	team1Points, team2Points (Int, default: 0)
+	•	date (DateTime)
+	•	location (optional)
+	•	createdAt, updatedAt
+	•	Winner is determined by comparing team1Sets vs team2Sets
+
+⸻
+
+EventMembers
+	•	Junction table linking Players to Events
+	•	Fields:
+	•	id (UUID)
+	•	userId (foreign key to Player.id)
+	•	eventId (foreign key to Event.id)
+	•	createdAt
+	•	Unique constraint on [userId, eventId]
+
+⸻
+
+🌐 Internationalization (i18n)
+
+Implement a language dropdown selector with the following languages:
+	•	Ukrainian (ukr)
+	•	English (eng)
+	•	Polish (pl)
+	•	Belarusian (bialorusian)
+
+Requirements:
+	•	Language selector should be visible in the header/navigation
+	•	Persist language selection (localStorage or cookies)
+	•	Translate all UI text, labels, buttons, and messages
+	•	Use a proper i18n library (react-i18next recommended)
+	•	Language files should be organized by feature/page
+	•	Default language: English
+
+⸻
+
+👨‍💼 Admin Panel & Data Entry Forms
+
+Create comprehensive admin forms for data management:
+
+⸻
+
+1. Create Event Form
+	•	Fields:
+	•	name (required, text input)
+	•	date (required, datetime picker)
+	•	createdBy (required, player selector dropdown - shows all players)
+	•	location (optional, text input)
+	•	Validation:
+	•	All required fields must be filled
+	•	Date must be valid
+	•	Player must exist
+	•	Submit creates new event via POST /events
+
+⸻
+
+2. Create Game Form
+	•	Fields:
+	•	eventId (required, event selector dropdown - shows all events)
+	•	Team 1:
+	•	team1Player1Id (required, player selector)
+	•	team1Player2Id (required, player selector)
+	•	team1Sets (required, number input, min: 0)
+	•	team1Points (required, number input, min: 0)
+	•	Team 2:
+	•	team2Player1Id (required, player selector)
+	•	team2Player2Id (required, player selector)
+	•	team2Sets (required, number input, min: 0)
+	•	team2Points (required, number input, min: 0)
+	•	date (required, datetime picker)
+	•	location (optional, text input)
+	•	Validation:
+	•	All players must be different (no duplicate players across teams)
+	•	Each team must have exactly 2 unique players
+	•	Sets and points must be non-negative integers
+	•	Winner is automatically determined by comparing sets
+	•	Submit creates new game via POST /games
+	•	Visual indicator showing which team won based on sets
+
+⸻
+
+3. Register Player for Event Form
+	•	Fields:
+	•	userId (required, player selector dropdown)
+	•	eventId (required, event selector dropdown)
+	•	Validation:
+	•	Prevent duplicate registrations (same player + event)
+	•	Submit creates event member via POST /event-members
+
+⸻
+
+4. Create Player Form
+	•	Fields:
+	•	tgId (optional, text input)
+	•	name (required, text input)
+	•	avatar (optional, file upload or URL input)
+	•	gender (optional, select dropdown: Male/Female/Other)
+	•	active (checkbox, default: true)
+	•	Validation:
+	•	Name is required
+	•	tgId must be unique if provided
+	•	Submit creates new player via POST /players
+
+⸻
+
+Admin Form UI Requirements:
+	•	Clean, intuitive form layouts
+	•	Clear field labels and placeholders
+	•	Real-time validation feedback
+	•	Success/error notifications after submission
+	•	Loading states during API calls
+	•	Form reset after successful submission
+	•	Responsive design for mobile devices
+	•	Accessible form controls (ARIA labels, keyboard navigation)
+
+⸻
+
+📊 Analytics & Rankings (core feature)
+
+The main focus of the application is statistics and analytics.
+
+Implement the following dashboards:
+
+⸻
+
+⭐ Player Rankings
+	•	Top players by:
+	•	total wins
+	•	win rate (%)
+	•	total sets won
+	•	tournaments won (events where player participated)
+	•	lowest number of losses
+	•	highest points difference
+	•	Sortable tables
+	•	Filters by date range and event
+	•	Data fetched from backend API endpoints
+
+⸻
+
+🤝 Head-to-Head Analytics
+
+For every player:
+	•	Results when:
+	•	playing with another player (same team)
+	•	playing against another player
+	•	Display:
+	•	games played together
+	•	wins / losses
+	•	win rate
+	•	Matrix view (player vs player)
+	•	Calculate from Game entities and Player relations
+
+⸻
+
+🏆 Tournament Analytics
+	•	Event leaderboard
+	•	Final standings
+	•	Winners (players with most wins in event)
+	•	Most valuable player (MVP) - player with best performance
+	•	Best team by statistics (most successful player pairs)
+	•	Event members list with player details
+	•	Use EventMember relations to show participants
+
+⸻
+
+📈 Advanced insights
+
+Examples:
+	•	Best player combinations (most successful pairs)
+	•	Most successful pairs (by win rate)
+	•	Players with longest win streak
+	•	Players with biggest improvement over time
+	•	Performance by location
+	•	Performance by partner
+	•	Calculate from Game and Player statistics
+
+⸻
+
+🎨 UI / UX requirements
+	•	Clean sports analytics style
+	•	Inspired by:
+	•	modern tournament platforms
+	•	minimal dashboard design
+	•	Components:
+	•	player cards
+	•	ranking tables
+	•	charts and graphs
+	•	filters
+	•	comparison views
+	•	Admin forms with clear validation
+	•	Language selector in header
+
+⸻
+
+🧩 Pages
+	•	/players
+	•	list of all players (if needed)
+	•	individual player profile page
+	•	player statistics and history
+	•	/games
+	•	games list
+	•	game details with team information
+	•	/events
+	•	tournaments list
+	•	event page with standings and members
+	•	event details with games list
+	•	/admin
+	•	admin dashboard
+	•	create event form
+	•	create game form
+	•	create player form
+	•	register player for event form
+	•	/rankings
+	•	global rankings
+	•	/analytics
+	•	advanced statistics dashboard
+
+⸻
+
+🛠️ Tech expectations
+	•	Use NextJS, React, TypeScript
+	•	Responsive layout
+	•	Component-based architecture
+	•	Connect to NestJS backend API (endpoints documented below)
+	•	Focus on UI structure and data relationships
+	•	Charts can use libraries like Recharts or Chart.js
+	•	Form handling with react-hook-form or Formik
+	•	i18n with react-i18next
+	•	State management (Context API, Zustand, or Redux)
+
+⸻
+
+🔌 Backend API Endpoints
+
+Available endpoints (NestJS backend):
+
+Players:
+	•	POST /players - Create player
+	•	GET /players/:id/events - Get player's events
+
+Events:
+	•	POST /events - Create event
+	•	GET /events - List all events
+	•	GET /events/:id - Get event (with optional ?includeGames=true&includeMembers=true)
+	•	PATCH /events/:id - Update event
+	•	DELETE /events/:id - Delete event
+
+Games:
+	•	POST /games - Create game
+	•	GET /games - List all games
+	•	GET /games/:id - Get game details
+	•	PATCH /games/:id - Update game
+	•	DELETE /games/:id - Delete game
+
+Event Members:
+	•	POST /event-members - Register player for event
+	•	GET /event-members/event/:eventId - Get all members for event (includes full player data)
+	•	GET /event-members/player/:userId - Get all events for player
+	•	DELETE /event-members/:id - Remove event member
+	•	DELETE /event-members/event/:eventId/player/:userId - Remove by event and player
+
+⸻
+
+✅ Goal
+
+Create a visually appealing and easy-to-extend platform for:
+	•	tracking beach volleyball games
+	•	analyzing player performance
+	•	comparing players and teams
+	•	visualizing tournament results
+	•	managing events and games through admin interface
+	•	supporting multiple languages
+
+The application should feel like a professional sports statistics platform, not a simple CRUD app. The admin forms should be intuitive and provide clear feedback for data entry.
