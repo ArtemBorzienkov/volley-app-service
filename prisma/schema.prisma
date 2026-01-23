@@ -10,66 +10,96 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id        String   @id
-  firstName String
-  lastName  String?  @default("")
-  userName  String?  @default("")
-  email     String?  @default("")
-  isPremium Boolean? @default(false)
+model Player {
+  id          String   @id @default(uuid())
+  tgId        String?  @unique @map("tg_id")
+  name        String
+  avatar      String?
+  gender      String?
+  active      Boolean  @default(true)
+  totalGames  Int      @default(0) @map("total_games")
+  totalWins   Int      @default(0) @map("total_wins")
+  totalLosses Int      @default(0) @map("total_losses")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
-  @@map("users")
+  // Relations - games where player is in team1
+  team1GamesAsPlayer1 Game[] @relation("Team1Player1")
+  team1GamesAsPlayer2 Game[] @relation("Team1Player2")
+  // Relations - games where player is in team2
+  team2GamesAsPlayer1 Game[] @relation("Team2Player1")
+  team2GamesAsPlayer2 Game[] @relation("Team2Player2")
+  // Relations - event memberships
+  eventMembers EventMember[]
+  // Relations - created events
+  createdEvents Event[]
+
+  @@index([tgId])
+  @@map("players")
 }
 
-model TrainingMember {
-  id         String   @id
-  userId     String
-  trainingId String
-  name       String
-  createdAt  Int
-  isInvited  Boolean
-  training   Training @relation(fields: [trainingId], references: [id])
+model Event {
+  id        String   @id @default(uuid())
+  name      String
+  date      DateTime
+  createdBy String   @map("created_by")
+  location  String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  @@map("training_members")
+  games        Game[]
+  eventMembers EventMember[]
+  creator      Player @relation(fields: [createdBy], references: [id])
+
+  @@index([date])
+  @@index([createdBy])
+  @@map("events")
 }
 
-model Training {
-  id               String           @id
-  coachId          String
-  date             String
-  msg              Int?
-  maxMembers       Int?
-  training_members TrainingMember[]
-  configId         String
-  config           ConfigEvent      @relation(fields: [configId], references: [id])
+model Game {
+  id             String   @id @default(uuid())
+  eventId        String   @map("event_id")
+  team1Player1Id String   @map("team1_player1_id")
+  team1Player2Id String   @map("team1_player2_id")
+  team2Player1Id String   @map("team2_player1_id")
+  team2Player2Id String   @map("team2_player2_id")
+  team1Sets      Int      @default(0) @map("team1_sets")
+  team2Sets      Int      @default(0) @map("team2_sets")
+  team1Points    Int      @default(0) @map("team1_points")
+  team2Points    Int      @default(0) @map("team2_points")
+  date           DateTime
+  location       String?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
 
-  @@map("trainings")
+  // Relations
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  team1Player1 Player @relation("Team1Player1", fields: [team1Player1Id], references: [id])
+  team1Player2 Player @relation("Team1Player2", fields: [team1Player2Id], references: [id])
+  team2Player1 Player @relation("Team2Player1", fields: [team2Player1Id], references: [id])
+  team2Player2 Player @relation("Team2Player2", fields: [team2Player2Id], references: [id])
+
+  @@index([eventId])
+  @@index([date])
+  @@index([team1Player1Id])
+  @@index([team1Player2Id])
+  @@index([team2Player1Id])
+  @@index([team2Player2Id])
+  @@map("games")
 }
 
-model ConfigEvent {
-  id          String     @id
-  chat_id     String
-  chat_title  String
-  coach_id    String
-  day         String
-  time        String
-  max         Int
-  location    String
-  isForum     Boolean?
-  publish_day String
-  topic_id    Int?
-  active      Boolean    @default(true)
-  repeatable  Boolean    @default(true)
-  trainings   Training[]
+model EventMember {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  eventId   String   @map("event_id")
+  createdAt DateTime @default(now()) @map("created_at")
 
-  @@map("configs")
-}
+  player Player @relation(fields: [userId], references: [id], onDelete: Cascade)
+  event  Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
-model Group {
-  chat_id    String   @id
-  chat_title String
-  coach_id   String
-  isForum    Boolean?
-
-  @@map("groups")
+  @@unique([userId, eventId])
+  @@index([eventId])
+  @@index([userId])
+  @@map("event_members")
 }
