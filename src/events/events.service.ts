@@ -7,6 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
 import { EventResponseDto } from './dto/event-response.dto';
+import { CreateEventWithGamesDto } from './dto/create-event-with-games.dto';
 
 @Injectable()
 export class EventsService {
@@ -34,6 +35,116 @@ export class EventsService {
     });
 
     return this.mapToResponseDto(event);
+  }
+
+  async createWithGames(
+    createEventWithGamesDto: CreateEventWithGamesDto,
+  ): Promise<EventResponseDto> {
+    // Validate creator if provided
+    if (createEventWithGamesDto.createdBy) {
+      const creator = await this.prisma.player.findUnique({
+        where: { id: createEventWithGamesDto.createdBy },
+      });
+
+      if (!creator) {
+        throw new NotFoundException(
+          `Player with ID ${createEventWithGamesDto.createdBy} not found`,
+        );
+      }
+    }
+
+    // Validate all games before creating
+    for (const game of createEventWithGamesDto.games) {
+      await this.validateTeamComposition(
+        game.team1Player1Id,
+        game.team1Player2Id,
+        game.team2Player1Id,
+        game.team2Player2Id,
+      );
+    }
+
+    const eventDate = new Date(createEventWithGamesDto.date);
+
+    // Create event and all games in a transaction
+    const result = await this.prisma.$transaction(async (tx) => {
+      // Create event - build data object conditionally
+      const eventCreateData: {
+        name: string;
+        date: Date;
+        createdBy?: string | null;
+        location?: string;
+      } = {
+        name: createEventWithGamesDto.name,
+        date: eventDate,
+      };
+
+      // Handle optional createdBy - set to null explicitly if not provided
+      // This works with Prisma's optional relation handling
+      if (createEventWithGamesDto.createdBy !== undefined) {
+        eventCreateData.createdBy = createEventWithGamesDto.createdBy || null;
+      } else {
+        eventCreateData.createdBy = null;
+      }
+
+      if (createEventWithGamesDto.location) {
+        eventCreateData.location = createEventWithGamesDto.location;
+      }
+
+      const event = await tx.event.create({
+        data: eventCreateData,
+      });
+
+      // Create all games and update player statistics
+      const createdGames = [];
+      for (const gameDto of createEventWithGamesDto.games) {
+        // Determine winner by points (team with more points wins)
+        const team1Won = gameDto.team1Points > gameDto.team2Points;
+
+        // Create game
+        const game = await tx.game.create({
+          data: {
+            eventId: event.id,
+            team1Player1Id: gameDto.team1Player1Id,
+            team1Player2Id: gameDto.team1Player2Id,
+            team2Player1Id: gameDto.team2Player1Id,
+            team2Player2Id: gameDto.team2Player2Id,
+            team1Points: gameDto.team1Points,
+            team2Points: gameDto.team2Points,
+            date: eventDate,
+            location: createEventWithGamesDto.location,
+          },
+        });
+
+        // Update player statistics
+        await this.updatePlayerStatsForGame(
+          tx,
+          gameDto.team1Player1Id,
+          team1Won,
+        );
+        await this.updatePlayerStatsForGame(
+          tx,
+          gameDto.team1Player2Id,
+          team1Won,
+        );
+        await this.updatePlayerStatsForGame(
+          tx,
+          gameDto.team2Player1Id,
+          !team1Won,
+        );
+        await this.updatePlayerStatsForGame(
+          tx,
+          gameDto.team2Player2Id,
+          !team1Won,
+        );
+
+        createdGames.push(game);
+      }
+
+      return { event, games: createdGames };
+    });
+
+    // Return event with games included
+    return this.mapToResponseDto(result.event, true);
   }
 
   async findAll(): Promise<EventResponseDto[]> {
@@ -136,7 +247,7 @@ export class EventsService {
       id: event.id,
       name: event.name,
       date: event.date,
-      createdBy: event.createdBy,
+      createdBy: event.createdBy || undefined,
       location: event.location,
       createdAt: event.createdAt,
       updatedAt: event.updatedAt,
@@ -150,8 +261,6 @@ export class EventsService {
         team1Player2Id: game.team1Player2Id,
         team2Player1Id: game.team2Player1Id,
         team2Player2Id: game.team2Player2Id,
-        team1Sets: game.team1Sets,
-        team2Sets: game.team2Sets,
         team1Points: game.team1Points,
         team2Points: game.team2Points,
         date: game.date,
@@ -171,5 +280,80 @@ export class EventsService {
     }
 
     return dto;
+  }
+
+  private async validateTeamComposition(
+    team1Player1Id: string,
+    team1Player2Id: string,
+    team2Player1Id: string,
+    team2Player2Id: string,
+  ): Promise<void> {
+    // Check that team1 has 2 unique players
+    if (team1Player1Id === team1Player2Id) {
+      throw new BadRequestException(
+        'Team 1 must have 2 different players',
+      );
+    }
+
+    // Check that team2 has 2 unique players
+    if (team2Player1Id === team2Player2Id) {
+      throw new BadRequestException(
+        'Team 2 must have 2 different players',
+      );
+    }
+
+    // Check that no player is on both teams
+    const team1Players = [team1Player1Id, team1Player2Id];
+    const team2Players = [team2Player1Id, team2Player2Id];
+
+    for (const playerId of team1Players) {
+      if (team2Players.includes(playerId)) {
+        throw new BadRequestException(
+          `Player ${playerId} cannot be on both teams`,
+        );
+      }
+    }
+
+    // Verify all players exist
+    const allPlayerIds = [
+      team1Player1Id,
+      team1Player2Id,
+      team2Player1Id,
+      team2Player2Id,
+    ];
+    const uniquePlayerIds = [...new Set(allPlayerIds)];
+
+    const players = await this.prisma.player.findMany({
+      where: {
+        id: {
+          in: uniquePlayerIds,
+        },
+      },
+    });
+
+    if (players.length !== uniquePlayerIds.length) {
+      const foundIds = players.map((p) => p.id);
+      const missingIds = uniquePlayerIds.filter(
+        (id) => !foundIds.includes(id),
+      );
+      throw new NotFoundException(
+        `Players not found: ${missingIds.join(', ')}`,
+      );
+    }
+  }
+
+  private async updatePlayerStatsForGame(
+    tx: any,
+    playerId: string,
+    won: boolean,
+  ): Promise<void> {
+    await tx.player.update({
+      where: { id: playerId },
+      data: {
+        totalGames: { increment: 1 },
+        totalWins: won ? { increment: 1 } : undefined,
+        totalLosses: won ? undefined : { increment: 1 },
+      },
+    });
   }
 }

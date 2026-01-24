@@ -35,6 +35,17 @@ export class PlayersService {
     return this.mapToResponseDto(player);
   }
 
+  async findAllActive(): Promise<PlayerResponseDto[]> {
+    const players = await this.prisma.player.findMany({
+      where: {
+        active: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return players.map((player) => this.mapToResponseDto(player));
+  }
+
   async getPlayerEvents(playerId: string): Promise<EventResponseDto[]> {
     // Verify player exists
     const player = await this.prisma.player.findUnique({

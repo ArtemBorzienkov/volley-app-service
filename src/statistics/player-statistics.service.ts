@@ -27,7 +27,8 @@ export class PlayerStatisticsService {
       dateFilter.lte = dateRange.end;
     }
 
-    const dateWhere = Object.keys(dateFilter).length > 0 ? { date: dateFilter } : {};
+    const dateWhere =
+      Object.keys(dateFilter).length > 0 ? { date: dateFilter } : {};
 
     // Get all games where player participated
     const gamesAsTeam1Player1 = await this.prisma.game.findMany({

@@ -43,8 +43,6 @@ export class GamesService {
           team1Player2Id: createGameDto.team1Player2Id,
           team2Player1Id: createGameDto.team2Player1Id,
           team2Player2Id: createGameDto.team2Player2Id,
-          team1Sets: createGameDto.team1Sets,
-          team2Sets: createGameDto.team2Sets,
           team1Points: createGameDto.team1Points,
           team2Points: createGameDto.team2Points,
           date: gameDate,
@@ -52,8 +50,8 @@ export class GamesService {
         },
       });
 
-      // Determine winner
-      const team1Won = createGameDto.team1Sets > createGameDto.team2Sets;
+      // Determine winner by points
+      const team1Won = createGameDto.team1Points > createGameDto.team2Points;
 
       // Update player statistics
       await this.updatePlayerStatsForGame(
@@ -83,9 +81,10 @@ export class GamesService {
     return this.mapToResponseDto(game);
   }
 
-  async findAll(): Promise<GameResponseDto[]> {
+  async findAll(limit: number = 5): Promise<GameResponseDto[]> {
     const games = await this.prisma.game.findMany({
       orderBy: { date: 'desc' },
+      take: limit,
     });
 
     return games.map((game) => this.mapToResponseDto(game));
@@ -147,8 +146,7 @@ export class GamesService {
     // Update game and recalculate statistics in a transaction
     const updatedGame = await this.prisma.$transaction(async (tx) => {
       // First, revert old statistics
-      const oldTeam1Won =
-        existingGame.team1Sets > existingGame.team2Sets;
+      const oldTeam1Won = existingGame.team1Points > existingGame.team2Points;
       await this.revertPlayerStatsForGame(
         tx,
         existingGame.team1Player1Id,
@@ -182,10 +180,6 @@ export class GamesService {
         updateData.team2Player1Id = updateGameDto.team2Player1Id;
       if (updateGameDto.team2Player2Id !== undefined)
         updateData.team2Player2Id = updateGameDto.team2Player2Id;
-      if (updateGameDto.team1Sets !== undefined)
-        updateData.team1Sets = updateGameDto.team1Sets;
-      if (updateGameDto.team2Sets !== undefined)
-        updateData.team2Sets = updateGameDto.team2Sets;
       if (updateGameDto.team1Points !== undefined)
         updateData.team1Points = updateGameDto.team1Points;
       if (updateGameDto.team2Points !== undefined)
@@ -201,7 +195,7 @@ export class GamesService {
       });
 
       // Apply new statistics
-      const newTeam1Won = game.team1Sets > game.team2Sets;
+      const newTeam1Won = game.team1Points > game.team2Points;
       await this.updatePlayerStatsForGame(
         tx,
         game.team1Player1Id,
@@ -241,7 +235,7 @@ export class GamesService {
     // Delete game and revert statistics in a transaction
     await this.prisma.$transaction(async (tx) => {
       // Revert statistics
-      const team1Won = game.team1Sets > game.team2Sets;
+      const team1Won = game.team1Points > game.team2Points;
       await this.revertPlayerStatsForGame(
         tx,
         game.team1Player1Id,
@@ -368,8 +362,6 @@ export class GamesService {
       team1Player2Id: game.team1Player2Id,
       team2Player1Id: game.team2Player1Id,
       team2Player2Id: game.team2Player2Id,
-      team1Sets: game.team1Sets,
-      team2Sets: game.team2Sets,
       team1Points: game.team1Points,
       team2Points: game.team2Points,
       date: game.date,

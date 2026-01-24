@@ -2,7 +2,7 @@ export class EventResponseDto {
   id: string;
   name: string;
   date: Date;
-  createdBy: string;
+  createdBy?: string;
   location?: string;
   createdAt: Date;
   updatedAt: Date;

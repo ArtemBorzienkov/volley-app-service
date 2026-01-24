@@ -30,16 +30,6 @@ export class UpdateGameDto {
   @IsOptional()
   @IsInt()
   @Min(0)
-  team1Sets?: number;
-
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  team2Sets?: number;
-
-  @IsOptional()
-  @IsInt()
-  @Min(0)
   team1Points?: number;
 
   @IsOptional()

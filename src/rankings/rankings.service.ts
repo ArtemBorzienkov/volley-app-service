@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { PlayerStatisticsService } from '../statistics/player-statistics.service';
 import { RankingFiltersDto } from '../common/dto/ranking-filters.dto';
 import { RankingResponseDto } from './dto/ranking-response.dto';
+import { TeamCombinationResponseDto } from './dto/team-combination-response.dto';
 import { PlayerResponseDto } from '../players/dto/player-response.dto';
 
 @Injectable()
@@ -225,7 +226,7 @@ export class RankingsService {
       const playerWinsInEvent = new Map<string, number>();
 
       for (const game of event.games) {
-        const team1Won = game.team1Sets > game.team2Sets;
+        const team1Won = game.team1Points > game.team2Points;
         const team1Players = [game.team1Player1Id, game.team1Player2Id];
         const team2Players = [game.team2Player1Id, game.team2Player2Id];
 
@@ -363,6 +364,153 @@ export class RankingsService {
       player: this.mapPlayerToResponseDto(stat.player),
       value: stat.pointsDifference,
       metric: 'pointsDifference',
+    }));
+  }
+
+  async getBestTeamCombinations(
+    limit: number = 5,
+  ): Promise<TeamCombinationResponseDto[]> {
+    // Get all games
+    const games = await this.prisma.game.findMany({
+      orderBy: { date: 'desc' },
+    });
+
+    // Map to track team combinations: key is sorted player IDs (player1Id_player2Id where player1Id < player2Id)
+    const teamStats = new Map<
+      string,
+      {
+        player1Id: string;
+        player2Id: string;
+        gamesPlayed: number;
+        wins: number;
+        losses: number;
+        setsWon: number;
+        setsLost: number;
+        pointsScored: number;
+        pointsConceded: number;
+      }
+    >();
+
+    // Process each game
+    for (const game of games) {
+      // Team 1
+      const team1Players = [game.team1Player1Id, game.team1Player2Id].sort();
+      const team1Key = `${team1Players[0]}_${team1Players[1]}`;
+
+      if (!teamStats.has(team1Key)) {
+        teamStats.set(team1Key, {
+          player1Id: team1Players[0],
+          player2Id: team1Players[1],
+          gamesPlayed: 0,
+          wins: 0,
+          losses: 0,
+          setsWon: 0,
+          setsLost: 0,
+          pointsScored: 0,
+          pointsConceded: 0,
+        });
+      }
+
+      const team1Stats = teamStats.get(team1Key)!;
+      team1Stats.gamesPlayed++;
+      team1Stats.pointsScored += game.team1Points;
+      team1Stats.pointsConceded += game.team2Points;
+
+      if (game.team1Points > game.team2Points) {
+        team1Stats.wins++;
+      } else if (game.team2Points > game.team1Points) {
+        team1Stats.losses++;
+      }
+
+      // Team 2
+      const team2Players = [game.team2Player1Id, game.team2Player2Id].sort();
+      const team2Key = `${team2Players[0]}_${team2Players[1]}`;
+
+      if (!teamStats.has(team2Key)) {
+        teamStats.set(team2Key, {
+          player1Id: team2Players[0],
+          player2Id: team2Players[1],
+          gamesPlayed: 0,
+          wins: 0,
+          losses: 0,
+          setsWon: 0,
+          setsLost: 0,
+          pointsScored: 0,
+          pointsConceded: 0,
+        });
+      }
+
+      const team2Stats = teamStats.get(team2Key)!;
+      team2Stats.gamesPlayed++;
+      team2Stats.pointsScored += game.team2Points;
+      team2Stats.pointsConceded += game.team1Points;
+
+      if (game.team2Points > game.team1Points) {
+        team2Stats.wins++;
+      } else if (game.team1Points > game.team2Points) {
+        team2Stats.losses++;
+      }
+    }
+
+    // Get all unique player IDs
+    const allPlayerIds = new Set<string>();
+    teamStats.forEach((stats) => {
+      allPlayerIds.add(stats.player1Id);
+      allPlayerIds.add(stats.player2Id);
+    });
+
+    // Fetch all players
+    const players = await this.prisma.player.findMany({
+      where: {
+        id: { in: Array.from(allPlayerIds) },
+      },
+    });
+
+    const playerMap = new Map(players.map((p) => [p.id, p]));
+
+    // Convert to array and calculate win rate, then sort
+    const combinations = Array.from(teamStats.values())
+      .map((stats) => ({
+        ...stats,
+        player1: playerMap.get(stats.player1Id),
+        player2: playerMap.get(stats.player2Id),
+        winRate:
+          stats.gamesPlayed > 0
+            ? Math.round((stats.wins / stats.gamesPlayed) * 100 * 100) / 100
+            : 0,
+      }))
+      .filter(
+        (stats) =>
+          stats.gamesPlayed > 0 &&
+          stats.player1 &&
+          stats.player2 &&
+          stats.player1.active &&
+          stats.player2.active,
+      ) // Only include teams that have played at least one game and both players are active
+      .sort((a, b) => {
+        // Sort by win rate first, then by wins, then by games played
+        if (b.winRate !== a.winRate) {
+          return b.winRate - a.winRate;
+        }
+        if (b.wins !== a.wins) {
+          return b.wins - a.wins;
+        }
+        return b.gamesPlayed - a.gamesPlayed;
+      })
+      .slice(0, limit);
+
+    return combinations.map((combo, index) => ({
+      rank: index + 1,
+      player1: this.mapPlayerToResponseDto(combo.player1),
+      player2: this.mapPlayerToResponseDto(combo.player2),
+      gamesPlayed: combo.gamesPlayed,
+      wins: combo.wins,
+      losses: combo.losses,
+      winRate: combo.winRate,
+      setsWon: combo.setsWon,
+      setsLost: combo.setsLost,
+      pointsScored: combo.pointsScored,
+      pointsConceded: combo.pointsConceded,
     }));
   }
 }

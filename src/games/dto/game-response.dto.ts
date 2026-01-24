@@ -5,8 +5,6 @@ export class GameResponseDto {
   team1Player2Id: string;
   team2Player1Id: string;
   team2Player2Id: string;
-  team1Sets: number;
-  team2Sets: number;
   team1Points: number;
   team2Points: number;
   date: Date;

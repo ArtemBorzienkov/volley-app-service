@@ -2,6 +2,7 @@ import { Controller, Get, Query } from '@nestjs/common';
 import { RankingsService } from './rankings.service';
 import { RankingFiltersDto } from '../common/dto/ranking-filters.dto';
 import { RankingResponseDto } from './dto/ranking-response.dto';
+import { TeamCombinationResponseDto } from './dto/team-combination-response.dto';
 
 @Controller('rankings')
 export class RankingsController {
@@ -65,5 +66,13 @@ export class RankingsController {
       filters.limit || 10,
       filters,
     );
+  }
+
+  @Get('best-team-combinations')
+  async getBestTeamCombinations(
+    @Query('limit') limit?: string,
+  ): Promise<TeamCombinationResponseDto[]> {
+    const limitNumber = limit ? parseInt(limit, 10) : 5;
+    return this.rankingsService.getBestTeamCombinations(limitNumber);
   }
 }

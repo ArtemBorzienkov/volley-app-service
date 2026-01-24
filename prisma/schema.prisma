@@ -42,14 +42,14 @@ model Event {
   id        String   @id @default(uuid())
   name      String
   date      DateTime
-  createdBy String   @map("created_by")
+  createdBy String?  @map("created_by")
   location  String?
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
   games        Game[]
   eventMembers EventMember[]
-  creator      Player @relation(fields: [createdBy], references: [id])
+  creator      Player? @relation(fields: [createdBy], references: [id])
 
   @@index([date])
   @@index([createdBy])
@@ -63,8 +63,6 @@ model Game {
   team1Player2Id String   @map("team1_player2_id")
   team2Player1Id String   @map("team2_player1_id")
   team2Player2Id String   @map("team2_player2_id")
-  team1Sets      Int      @default(0) @map("team1_sets")
-  team2Sets      Int      @default(0) @map("team2_sets")
   team1Points    Int      @default(0) @map("team1_points")
   team2Points    Int      @default(0) @map("team2_points")
   date           DateTime

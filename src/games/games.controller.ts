@@ -6,6 +6,7 @@ import {
   Patch,
   Param,
   Delete,
+  Query,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
@@ -13,6 +14,7 @@ import { GamesService } from './games.service';
 import { CreateGameDto } from './dto/create-game.dto';
 import { UpdateGameDto } from './dto/update-game.dto';
 import { GameResponseDto } from './dto/game-response.dto';
+import { GamesQueryDto } from './dto/games-query.dto';
 
 @Controller('games')
 export class GamesController {
@@ -25,8 +27,9 @@ export class GamesController {
   }
 
   @Get()
-  async findAll(): Promise<GameResponseDto[]> {
-    return this.gamesService.findAll();
+  async findAll(@Query() query: GamesQueryDto): Promise<GameResponseDto[]> {
+    const limit = query.limit || 5;
+    return this.gamesService.findAll(limit);
   }
 
   @Get(':id')

@@ -24,6 +24,11 @@ export class PlayersController {
     return this.playersService.create(createPlayerDto);
   }
 
+  @Get()
+  async findAllActive(): Promise<PlayerResponseDto[]> {
+    return this.playersService.findAllActive();
+  }
+
   @Get(':id/events')
   async getPlayerEvents(@Param('id') id: string): Promise<EventResponseDto[]> {
     return this.playersService.getPlayerEvents(id);

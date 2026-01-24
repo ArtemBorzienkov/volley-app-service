@@ -1,17 +1,15 @@
 import {
   IsString,
-  IsInt,
   IsDateString,
   IsOptional,
-  Min,
   IsArray,
-  ArrayUnique,
+  ValidateNested,
+  IsInt,
+  Min,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 
-export class CreateGameDto {
-  @IsString()
-  eventId: string;
-
+class CreateGameDto {
   @IsString()
   team1Player1Id: string;
 
@@ -31,6 +29,11 @@ export class CreateGameDto {
   @IsInt()
   @Min(0)
   team2Points: number;
+}
+
+export class CreateEventWithGamesDto {
+  @IsString()
+  name: string;
 
   @IsDateString()
   date: string;
@@ -38,4 +41,13 @@ export class CreateGameDto {
   @IsOptional()
   @IsString()
   location?: string;
+
+  @IsOptional()
+  @IsString()
+  createdBy?: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateGameDto)
+  games: CreateGameDto[];
 }

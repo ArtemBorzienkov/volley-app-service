@@ -14,6 +14,7 @@ import { EventsService } from './events.service';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
 import { EventResponseDto } from './dto/event-response.dto';
+import { CreateEventWithGamesDto } from './dto/create-event-with-games.dto';
 
 @Controller('events')
 export class EventsController {
@@ -23,6 +24,14 @@ export class EventsController {
   @HttpCode(HttpStatus.CREATED)
   async create(@Body() createEventDto: CreateEventDto): Promise<EventResponseDto> {
     return this.eventsService.create(createEventDto);
+  }
+
+  @Post('with-games')
+  @HttpCode(HttpStatus.CREATED)
+  async createWithGames(
+    @Body() createEventWithGamesDto: CreateEventWithGamesDto,
+  ): Promise<EventResponseDto> {
+    return this.eventsService.createWithGames(createEventWithGamesDto);
   }
 
   @Get()
