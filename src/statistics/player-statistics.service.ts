@@ -76,8 +76,6 @@ export class PlayerStatisticsService {
     let totalGames = uniqueGames.length;
     let totalWins = 0;
     let totalLosses = 0;
-    let setsWon = 0;
-    let setsLost = 0;
     let pointsScored = 0;
     let pointsConceded = 0;
 
@@ -88,25 +86,21 @@ export class PlayerStatisticsService {
         game.team2Player1Id === playerId || game.team2Player2Id === playerId;
 
       if (isTeam1) {
-        setsWon += game.team1Sets;
-        setsLost += game.team2Sets;
         pointsScored += game.team1Points;
         pointsConceded += game.team2Points;
 
-        if (game.team1Sets > game.team2Sets) {
+        if (game.team1Points > game.team2Points) {
           totalWins++;
-        } else if (game.team2Sets > game.team1Sets) {
+        } else if (game.team2Points > game.team1Points) {
           totalLosses++;
         }
       } else if (isTeam2) {
-        setsWon += game.team2Sets;
-        setsLost += game.team1Sets;
         pointsScored += game.team2Points;
         pointsConceded += game.team1Points;
 
-        if (game.team2Sets > game.team1Sets) {
+        if (game.team2Points > game.team1Points) {
           totalWins++;
-        } else if (game.team1Sets > game.team2Sets) {
+        } else if (game.team1Points > game.team2Points) {
           totalLosses++;
         }
       }
@@ -121,8 +115,6 @@ export class PlayerStatisticsService {
       totalWins,
       totalLosses,
       winRate: Math.round(winRate * 100) / 100, // Round to 2 decimal places
-      setsWon,
-      setsLost,
       pointsScored,
       pointsConceded,
       pointsDifference,
@@ -136,6 +128,6 @@ export class PlayerStatisticsService {
 
   async getPlayerSetsWon(playerId: string): Promise<number> {
     const stats = await this.getPlayerStats(playerId);
-    return stats.setsWon;
+    return stats.totalWins;
   }
 }

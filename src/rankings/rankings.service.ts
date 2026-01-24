@@ -111,9 +111,7 @@ export class RankingsService {
         where: { eventId: filters.eventId },
         select: { userId: true },
       });
-      const eventPlayerIds = new Set(
-        eventMemberIds.map((em) => em.userId),
-      );
+      const eventPlayerIds = new Set(eventMemberIds.map((em) => em.userId));
       filteredStats = playerStats.filter((ps) =>
         eventPlayerIds.has(ps.player.id),
       );
@@ -158,7 +156,7 @@ export class RankingsService {
         );
         return {
           player,
-          setsWon: stats.setsWon,
+          setsWon: stats.totalWins,
         };
       }),
     );
@@ -170,9 +168,7 @@ export class RankingsService {
         where: { eventId: filters.eventId },
         select: { userId: true },
       });
-      const eventPlayerIds = new Set(
-        eventMemberIds.map((em) => em.userId),
-      );
+      const eventPlayerIds = new Set(eventMemberIds.map((em) => em.userId));
       filteredStats = playerStats.filter((ps) =>
         eventPlayerIds.has(ps.player.id),
       );
@@ -255,10 +251,7 @@ export class RankingsService {
           .map(([playerId]) => playerId);
 
         winners.forEach((playerId) => {
-          tournamentWins.set(
-            playerId,
-            (tournamentWins.get(playerId) || 0) + 1,
-          );
+          tournamentWins.set(playerId, (tournamentWins.get(playerId) || 0) + 1);
         });
       }
     }
@@ -347,9 +340,7 @@ export class RankingsService {
         where: { eventId: filters.eventId },
         select: { userId: true },
       });
-      const eventPlayerIds = new Set(
-        eventMemberIds.map((em) => em.userId),
-      );
+      const eventPlayerIds = new Set(eventMemberIds.map((em) => em.userId));
       filteredStats = playerStats.filter((ps) =>
         eventPlayerIds.has(ps.player.id),
       );
