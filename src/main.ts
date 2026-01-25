@@ -11,6 +11,8 @@ async function bootstrap() {
       'http://localhost:3001',
       'http://127.0.0.1:8080',
       'http://64.227.120.106:8080',
+      'https://waw-beach-volley.site',
+      'https://www.waw-beach-volley.site',
     ],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
