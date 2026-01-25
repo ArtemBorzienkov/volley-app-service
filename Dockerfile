@@ -7,16 +7,28 @@ WORKDIR /usr/app
 # A wildcard is used to ensure both package.json AND package-lock.json are copied
 # where available (npm@5+)
 COPY package*.json ./
-COPY prisma ./prisma/
 
 RUN npm install
+
+# Copy Prisma schema and migrations directory
+COPY prisma ./prisma/
+
+# Generate Prisma Client
 RUN npx prisma generate
-# If you are building your code for production
-# RUN npm ci --only=production
 
 # Bundle app source
 COPY . .
-WORKDIR /usr/app/src
+
+# Build the application
+RUN npm run build
+
+# Make migration script executable
+RUN chmod +x ./scripts/migrate-and-start.sh
+
+WORKDIR /usr/app
 
 EXPOSE 3000
-CMD [ "npm", "run", "start" ]
+
+# Run migrations and start the app
+# migrate deploy applies pending migrations in production
+CMD ["./scripts/migrate-and-start.sh"]
