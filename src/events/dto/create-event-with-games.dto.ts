@@ -6,6 +6,7 @@ import {
   ValidateNested,
   IsInt,
   Min,
+  IsObject,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -45,6 +46,10 @@ export class CreateEventWithGamesDto {
   @IsOptional()
   @IsString()
   createdBy?: string;
+
+  @IsOptional()
+  @IsObject()
+  places?: Record<string, string>;
 
   @IsArray()
   @ValidateNested({ each: true })

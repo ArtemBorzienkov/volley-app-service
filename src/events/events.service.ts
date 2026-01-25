@@ -63,6 +63,11 @@ export class EventsService {
       );
     }
 
+    // Validate places if provided
+    if (createEventWithGamesDto.places) {
+      await this.validatePlaces(createEventWithGamesDto.places);
+    }
+
     const eventDate = new Date(createEventWithGamesDto.date);
 
     // Create event and all games in a transaction
@@ -73,6 +78,7 @@ export class EventsService {
         date: Date;
         createdBy?: string | null;
         location?: string;
+        data?: any;
       } = {
         name: createEventWithGamesDto.name,
         date: eventDate,
@@ -88,6 +94,11 @@ export class EventsService {
 
       if (createEventWithGamesDto.location) {
         eventCreateData.location = createEventWithGamesDto.location;
+      }
+
+      // Store places as JSON in data field
+      if (createEventWithGamesDto.places && Object.keys(createEventWithGamesDto.places).length > 0) {
+        eventCreateData.data = createEventWithGamesDto.places;
       }
 
       const event = await tx.event.create({
@@ -249,6 +260,7 @@ export class EventsService {
       date: event.date,
       createdBy: event.createdBy || undefined,
       location: event.location,
+      data: event.data as Record<string, string> | undefined,
       createdAt: event.createdAt,
       updatedAt: event.updatedAt,
     };
@@ -355,5 +367,41 @@ export class EventsService {
         totalLosses: won ? undefined : { increment: 1 },
       },
     });
+  }
+
+  private async validatePlaces(places: Record<string, string>): Promise<void> {
+    // Extract all player IDs from places
+    const playerIds = Object.values(places).filter((id) => id && id.trim() !== '');
+
+    if (playerIds.length === 0) {
+      return; // No places to validate
+    }
+
+    // Check for duplicate player IDs (same player can't have multiple places)
+    const uniquePlayerIds = [...new Set(playerIds)];
+    if (uniquePlayerIds.length !== playerIds.length) {
+      throw new BadRequestException(
+        'Each player can only have one tournament place',
+      );
+    }
+
+    // Verify all player IDs exist
+    const players = await this.prisma.player.findMany({
+      where: {
+        id: {
+          in: uniquePlayerIds,
+        },
+      },
+    });
+
+    if (players.length !== uniquePlayerIds.length) {
+      const foundIds = players.map((p) => p.id);
+      const missingIds = uniquePlayerIds.filter(
+        (id) => !foundIds.includes(id),
+      );
+      throw new NotFoundException(
+        `Players not found for places: ${missingIds.join(', ')}`,
+      );
+    }
   }
 }

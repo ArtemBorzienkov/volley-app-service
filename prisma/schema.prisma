@@ -44,6 +44,7 @@ model Event {
   date      DateTime
   createdBy String?  @map("created_by")
   location  String?
+  data      Json?
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
