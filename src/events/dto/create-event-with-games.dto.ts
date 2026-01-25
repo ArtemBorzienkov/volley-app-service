@@ -49,7 +49,7 @@ export class CreateEventWithGamesDto {
 
   @IsOptional()
   @IsObject()
-  places?: Record<string, string>;
+  places?: Record<string, string[]>;
 
   @IsArray()
   @ValidateNested({ each: true })

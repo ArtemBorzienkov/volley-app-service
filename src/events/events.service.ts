@@ -260,7 +260,7 @@ export class EventsService {
       date: event.date,
       createdBy: event.createdBy || undefined,
       location: event.location,
-      data: event.data as Record<string, string> | undefined,
+      data: event.data as Record<string, string[]> | undefined,
       createdAt: event.createdAt,
       updatedAt: event.updatedAt,
     };
@@ -369,23 +369,18 @@ export class EventsService {
     });
   }
 
-  private async validatePlaces(places: Record<string, string>): Promise<void> {
-    // Extract all player IDs from places
-    const playerIds = Object.values(places).filter((id) => id && id.trim() !== '');
+  private async validatePlaces(places: Record<string, string[]>): Promise<void> {
+    // Extract all player IDs from places (flatten arrays)
+    const playerIds = Object.values(places)
+      .flat()
+      .filter((id) => id && id.trim() !== '');
 
     if (playerIds.length === 0) {
       return; // No places to validate
     }
 
-    // Check for duplicate player IDs (same player can't have multiple places)
-    const uniquePlayerIds = [...new Set(playerIds)];
-    if (uniquePlayerIds.length !== playerIds.length) {
-      throw new BadRequestException(
-        'Each player can only have one tournament place',
-      );
-    }
-
     // Verify all player IDs exist
+    const uniquePlayerIds = [...new Set(playerIds)];
     const players = await this.prisma.player.findMany({
       where: {
         id: {

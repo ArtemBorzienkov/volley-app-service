@@ -4,7 +4,7 @@ export class EventResponseDto {
   date: Date;
   createdBy?: string;
   location?: string;
-  data?: Record<string, string>;
+  data?: Record<string, string[]>;
   createdAt: Date;
   updatedAt: Date;
   games?: any[]; // GameResponseDto[] - avoiding circular dependency
