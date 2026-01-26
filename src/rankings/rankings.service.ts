@@ -122,6 +122,7 @@ export class RankingsService {
           player,
           winRate: stats.winRate,
           totalGames: stats.totalGames,
+          totalWins: stats.totalWins,
         };
       }),
     );
@@ -137,10 +138,17 @@ export class RankingsService {
       filteredStats = playerStats.filter((ps) => eventPlayerIds.has(ps.player.id));
     }
 
-    // Filter players with at least 1 game and sort by win rate
+    // Filter players with at least 1 game and sort by win rate, then by total wins
     const sortedStats = filteredStats
       .filter((ps) => ps.totalGames > 0)
-      .sort((a, b) => b.winRate - a.winRate)
+      .sort((a, b) => {
+        // First sort by win rate (descending)
+        if (b.winRate !== a.winRate) {
+          return b.winRate - a.winRate;
+        }
+        // If win rate is equal, sort by total wins (descending)
+        return b.totalWins - a.totalWins;
+      })
       .slice(0, limit);
 
     return sortedStats.map((stat, index) => ({
