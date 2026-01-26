@@ -372,20 +372,54 @@ export class RankingsService {
   async getTopPlayersByGamesPlayed(limit: number = 10, filters?: RankingFiltersDto): Promise<RankingResponseDto[]> {
     // Ensure limit is a number
     const limitNumber = typeof limit === 'string' ? parseInt(limit, 10) : limit;
+
+    // Get all active players
     const players = await this.prisma.player.findMany({
       where: {
         active: true,
       },
-      orderBy: {
-        totalGames: 'desc',
-      },
-      take: limitNumber,
     });
 
-    return players.map((player, index) => ({
+    // Calculate win rate for each player
+    const playerStats = await Promise.all(
+      players.map(async (player) => {
+        const stats = await this.playerStatisticsService.getPlayerStats(player.id);
+        return {
+          player,
+          totalGames: stats.totalGames,
+          winRate: stats.winRate,
+        };
+      }),
+    );
+
+    // Filter by eventId if specified
+    let filteredStats = playerStats;
+    if (filters?.eventId) {
+      const eventMemberIds = await this.prisma.eventMember.findMany({
+        where: { eventId: filters.eventId },
+        select: { userId: true },
+      });
+      const eventPlayerIds = new Set(eventMemberIds.map((em) => em.userId));
+      filteredStats = playerStats.filter((ps) => eventPlayerIds.has(ps.player.id));
+    }
+
+    // Sort by total games (descending), then by win rate (descending)
+    const sortedStats = filteredStats
+      .filter((ps) => ps.totalGames > 0)
+      .sort((a, b) => {
+        // First sort by total games (descending)
+        if (b.totalGames !== a.totalGames) {
+          return b.totalGames - a.totalGames;
+        }
+        // If total games are equal, sort by win rate (descending)
+        return b.winRate - a.winRate;
+      })
+      .slice(0, limitNumber);
+
+    return sortedStats.map((stat, index) => ({
       rank: index + 1,
-      player: this.mapPlayerToResponseDto(player),
-      value: player.totalGames,
+      player: this.mapPlayerToResponseDto(stat.player),
+      value: stat.totalGames,
       metric: 'gamesPlayed',
     }));
   }
