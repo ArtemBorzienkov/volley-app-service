@@ -47,33 +47,45 @@ export class RankingsService {
     return where;
   }
 
-  private groupRankingsByGender(rankings: RankingResponseDto[]): GroupedRankingResponseDto {
+  private groupRankingsByGender(rankings: RankingResponseDto[], limit: number = 10): GroupedRankingResponseDto {
     const grouped: GroupedRankingResponseDto = {
       ALL: [],
       W: [],
       M: [],
     };
 
-    rankings.forEach((ranking, index) => {
-      // Add to ALL (all players)
-      grouped.ALL.push({
-        ...ranking,
-        rank: grouped.ALL.length + 1,
-      });
+    // Separate rankings by gender first
+    const allRankings: RankingResponseDto[] = []
+    const womenRankings: RankingResponseDto[] = []
+    const menRankings: RankingResponseDto[] = []
+
+    rankings.forEach((ranking) => {
+      // Add to ALL
+      allRankings.push(ranking)
 
       // Add to gender-specific group
       if (ranking.player.gender === 'female') {
-        grouped.W.push({
-          ...ranking,
-          rank: grouped.W.length + 1,
-        });
+        womenRankings.push(ranking)
       } else if (ranking.player.gender === 'male') {
-        grouped.M.push({
-          ...ranking,
-          rank: grouped.M.length + 1,
-        });
+        menRankings.push(ranking)
       }
-    });
+    })
+
+    // Apply limit to each category and assign ranks
+    grouped.ALL = allRankings.slice(0, limit).map((ranking, index) => ({
+      ...ranking,
+      rank: index + 1,
+    }))
+
+    grouped.W = womenRankings.slice(0, limit).map((ranking, index) => ({
+      ...ranking,
+      rank: index + 1,
+    }))
+
+    grouped.M = menRankings.slice(0, limit).map((ranking, index) => ({
+      ...ranking,
+      rank: index + 1,
+    }))
 
     return grouped;
   }
@@ -139,6 +151,7 @@ export class RankingsService {
     }
 
     // Filter players with at least 1 game and sort by win rate, then by total wins
+    // Don't apply limit here - let groupRankingsByGender handle it
     const sortedStats = filteredStats
       .filter((ps) => ps.totalGames > 0)
       .sort((a, b) => {
@@ -148,15 +161,16 @@ export class RankingsService {
         }
         // If win rate is equal, sort by total wins (descending)
         return b.totalWins - a.totalWins;
-      })
-      .slice(0, limit);
+      });
 
-    return sortedStats.map((stat, index) => ({
-      rank: index + 1,
+    const rankings = sortedStats.map((stat) => ({
+      rank: 0, // Will be set in groupRankingsByGender
       player: this.mapPlayerToResponseDto(stat.player),
       value: stat.winRate,
       metric: 'winRate',
     }));
+
+    return rankings;
   }
 
   async getTopPlayersBySetsWon(limit: number = 10, filters?: RankingFiltersDto): Promise<RankingResponseDto[]> {
@@ -346,6 +360,7 @@ export class RankingsService {
       },
     });
 
+    // Don't apply limit here - let groupRankingsByGender handle it
     const sortedPlayers = winners
       .map((player) => {
         const totalEvents = userTotalEventsMap.get(player.id)?.length || 0;
@@ -356,17 +371,18 @@ export class RankingsService {
           totalEvents,
         };
       })
-      .sort((a, b) => b.eventsWon - a.eventsWon)
-      .slice(0, limit);
+      .sort((a, b) => b.eventsWon - a.eventsWon);
 
-    return sortedPlayers.map((item, index) => ({
-      rank: index + 1,
+    const rankings = sortedPlayers.map((item) => ({
+      rank: 0, // Will be set in groupRankingsByGender
       player: this.mapPlayerToResponseDto(item.player),
       value: item.eventsWon,
       metric: 'eventsWon',
       totalEvents: item.totalEvents,
       eventsWon: item.eventsWon,
     }));
+
+    return rankings;
   }
 
   async getTopPlayersByGamesPlayed(limit: number = 10, filters?: RankingFiltersDto): Promise<RankingResponseDto[]> {
@@ -404,6 +420,7 @@ export class RankingsService {
     }
 
     // Sort by total games (descending), then by win rate (descending)
+    // Don't apply limit here - let groupRankingsByGender handle it
     const sortedStats = filteredStats
       .filter((ps) => ps.totalGames > 0)
       .sort((a, b) => {
@@ -413,39 +430,43 @@ export class RankingsService {
         }
         // If total games are equal, sort by win rate (descending)
         return b.winRate - a.winRate;
-      })
-      .slice(0, limitNumber);
+      });
 
-    return sortedStats.map((stat, index) => ({
-      rank: index + 1,
+    const rankings = sortedStats.map((stat) => ({
+      rank: 0, // Will be set in groupRankingsByGender
       player: this.mapPlayerToResponseDto(stat.player),
       value: stat.totalGames,
       metric: 'gamesPlayed',
     }));
+
+    return rankings;
   }
 
   async getTopPlayersByWonEventsGrouped(
     limit: number = 10,
     filters?: RankingFiltersDto,
   ): Promise<GroupedRankingResponseDto> {
-    const rankings = await this.getTopPlayersByWonEvents(limit, filters);
-    return this.groupRankingsByGender(rankings);
+    // Get all rankings without limit first
+    const allRankings = await this.getTopPlayersByWonEvents(1000, filters);
+    return this.groupRankingsByGender(allRankings, limit);
   }
 
   async getTopPlayersByWinRateGrouped(
     limit: number = 10,
     filters?: RankingFiltersDto,
   ): Promise<GroupedRankingResponseDto> {
-    const rankings = await this.getTopPlayersByWinRate(limit, filters);
-    return this.groupRankingsByGender(rankings);
+    // Get all rankings without limit first
+    const allRankings = await this.getTopPlayersByWinRate(1000, filters);
+    return this.groupRankingsByGender(allRankings, limit);
   }
 
   async getTopPlayersByGamesPlayedGrouped(
     limit: number = 10,
     filters?: RankingFiltersDto,
   ): Promise<GroupedRankingResponseDto> {
-    const rankings = await this.getTopPlayersByGamesPlayed(limit, filters);
-    return this.groupRankingsByGender(rankings);
+    // Get all rankings without limit first
+    const allRankings = await this.getTopPlayersByGamesPlayed(1000, filters);
+    return this.groupRankingsByGender(allRankings, limit);
   }
 
   async getTopPlayersByLowestLosses(limit: number = 10, filters?: RankingFiltersDto): Promise<RankingResponseDto[]> {
