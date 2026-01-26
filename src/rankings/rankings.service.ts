@@ -3,15 +3,13 @@ import { PrismaService } from '../prisma/prisma.service';
 import { PlayerStatisticsService } from '../statistics/player-statistics.service';
 import { RankingFiltersDto } from '../common/dto/ranking-filters.dto';
 import { RankingResponseDto } from './dto/ranking-response.dto';
+import { GroupedRankingResponseDto } from './dto/grouped-ranking-response.dto';
 import { TeamCombinationResponseDto } from './dto/team-combination-response.dto';
 import { PlayerResponseDto } from '../players/dto/player-response.dto';
 
 @Injectable()
 export class RankingsService {
-  constructor(
-    private prisma: PrismaService,
-    private playerStatisticsService: PlayerStatisticsService,
-  ) {}
+  constructor(private prisma: PrismaService, private playerStatisticsService: PlayerStatisticsService) {}
 
   private mapPlayerToResponseDto(player: any): PlayerResponseDto {
     return {
@@ -49,10 +47,40 @@ export class RankingsService {
     return where;
   }
 
-  async getTopPlayersByWins(
-    limit: number = 10,
-    filters?: RankingFiltersDto,
-  ): Promise<RankingResponseDto[]> {
+  private groupRankingsByGender(rankings: RankingResponseDto[]): GroupedRankingResponseDto {
+    const grouped: GroupedRankingResponseDto = {
+      ALL: [],
+      W: [],
+      M: [],
+    };
+
+    rankings.forEach((ranking, index) => {
+      // Add to ALL (all players)
+      grouped.ALL.push({
+        ...ranking,
+        rank: grouped.ALL.length + 1,
+      });
+
+      // Add to gender-specific group
+      if (ranking.player.gender === 'female') {
+        grouped.W.push({
+          ...ranking,
+          rank: grouped.W.length + 1,
+        });
+      } else if (ranking.player.gender === 'male') {
+        grouped.M.push({
+          ...ranking,
+          rank: grouped.M.length + 1,
+        });
+      }
+    });
+
+    return grouped;
+  }
+
+  async getTopPlayersByWins(limit: number = 10, filters?: RankingFiltersDto): Promise<RankingResponseDto[]> {
+    // Ensure limit is a number
+    const limitNumber = typeof limit === 'string' ? parseInt(limit, 10) : limit;
     const players = await this.prisma.player.findMany({
       where: {
         active: true,
@@ -60,7 +88,7 @@ export class RankingsService {
       orderBy: {
         totalWins: 'desc',
       },
-      take: limit,
+      take: limitNumber,
     });
 
     return players.map((player, index) => ({
@@ -71,10 +99,7 @@ export class RankingsService {
     }));
   }
 
-  async getTopPlayersByWinRate(
-    limit: number = 10,
-    filters?: RankingFiltersDto,
-  ): Promise<RankingResponseDto[]> {
+  async getTopPlayersByWinRate(limit: number = 10, filters?: RankingFiltersDto): Promise<RankingResponseDto[]> {
     const dateRange = filters
       ? {
           start: filters.startDate ? new Date(filters.startDate) : undefined,
@@ -92,10 +117,7 @@ export class RankingsService {
     // Calculate win rate for each player with filters
     const playerStats = await Promise.all(
       players.map(async (player) => {
-        const stats = await this.playerStatisticsService.getPlayerStats(
-          player.id,
-          dateRange,
-        );
+        const stats = await this.playerStatisticsService.getPlayerStats(player.id, dateRange);
         return {
           player,
           winRate: stats.winRate,
@@ -112,9 +134,7 @@ export class RankingsService {
         select: { userId: true },
       });
       const eventPlayerIds = new Set(eventMemberIds.map((em) => em.userId));
-      filteredStats = playerStats.filter((ps) =>
-        eventPlayerIds.has(ps.player.id),
-      );
+      filteredStats = playerStats.filter((ps) => eventPlayerIds.has(ps.player.id));
     }
 
     // Filter players with at least 1 game and sort by win rate
@@ -131,10 +151,7 @@ export class RankingsService {
     }));
   }
 
-  async getTopPlayersBySetsWon(
-    limit: number = 10,
-    filters?: RankingFiltersDto,
-  ): Promise<RankingResponseDto[]> {
+  async getTopPlayersBySetsWon(limit: number = 10, filters?: RankingFiltersDto): Promise<RankingResponseDto[]> {
     const dateRange = filters
       ? {
           start: filters.startDate ? new Date(filters.startDate) : undefined,
@@ -150,10 +167,7 @@ export class RankingsService {
 
     const playerStats = await Promise.all(
       players.map(async (player) => {
-        const stats = await this.playerStatisticsService.getPlayerStats(
-          player.id,
-          dateRange,
-        );
+        const stats = await this.playerStatisticsService.getPlayerStats(player.id, dateRange);
         return {
           player,
           setsWon: stats.totalWins,
@@ -169,14 +183,10 @@ export class RankingsService {
         select: { userId: true },
       });
       const eventPlayerIds = new Set(eventMemberIds.map((em) => em.userId));
-      filteredStats = playerStats.filter((ps) =>
-        eventPlayerIds.has(ps.player.id),
-      );
+      filteredStats = playerStats.filter((ps) => eventPlayerIds.has(ps.player.id));
     }
 
-    const sortedStats = filteredStats
-      .sort((a, b) => b.setsWon - a.setsWon)
-      .slice(0, limit);
+    const sortedStats = filteredStats.sort((a, b) => b.setsWon - a.setsWon).slice(0, limit);
 
     return sortedStats.map((stat, index) => ({
       rank: index + 1,
@@ -186,10 +196,7 @@ export class RankingsService {
     }));
   }
 
-  async getTopPlayersByTournamentsWon(
-    limit: number = 10,
-    filters?: RankingFiltersDto,
-  ): Promise<RankingResponseDto[]> {
+  async getTopPlayersByTournamentsWon(limit: number = 10, filters?: RankingFiltersDto): Promise<RankingResponseDto[]> {
     // Get all events (filtered by date if specified)
     const eventWhere: any = {};
     if (filters?.startDate || filters?.endDate) {
@@ -228,17 +235,11 @@ export class RankingsService {
 
         if (team1Won) {
           team1Players.forEach((playerId) => {
-            playerWinsInEvent.set(
-              playerId,
-              (playerWinsInEvent.get(playerId) || 0) + 1,
-            );
+            playerWinsInEvent.set(playerId, (playerWinsInEvent.get(playerId) || 0) + 1);
           });
         } else {
           team2Players.forEach((playerId) => {
-            playerWinsInEvent.set(
-              playerId,
-              (playerWinsInEvent.get(playerId) || 0) + 1,
-            );
+            playerWinsInEvent.set(playerId, (playerWinsInEvent.get(playerId) || 0) + 1);
           });
         }
       }
@@ -281,10 +282,133 @@ export class RankingsService {
     }));
   }
 
-  async getTopPlayersByLowestLosses(
+  async getTopPlayersByWonEvents(limit: number = 10, filters?: RankingFiltersDto): Promise<RankingResponseDto[]> {
+    // Maps to store arrays of event IDs
+    const userTotalEventsMap = new Map<string, string[]>(); // userId: [eventId1, eventId2, ...]
+    const winnerEventsMap = new Map<string, string[]>(); // userId: [eventId1, eventId2, ...]
+
+    const events = await this.prisma.event.findMany({
+      where: {},
+    });
+
+    if (!events.length) {
+      return [];
+    }
+
+    // Build winnerEventsMap from event data places
+    for (const event of events) {
+      // Check if event has places data
+      if (!event.data || typeof event.data !== 'object') {
+        continue;
+      }
+
+      for (const [place, playerIds] of Object.entries(event.data as Record<string, string[]>)) {
+        playerIds.forEach((playerId) => {
+          if (userTotalEventsMap.has(playerId)) {
+            const existingPlayerPlaces = userTotalEventsMap.get(playerId);
+            userTotalEventsMap.set(playerId, [...existingPlayerPlaces, place]);
+          } else {
+            userTotalEventsMap.set(playerId, [place]);
+          }
+        });
+
+        if (place === '1') {
+          playerIds.forEach((playerId) => {
+            if (winnerEventsMap.has(playerId)) {
+              const existingPlayerEvents = winnerEventsMap.get(playerId);
+              winnerEventsMap.set(playerId, [...existingPlayerEvents, event.id]);
+            } else {
+              winnerEventsMap.set(playerId, [event.id]);
+            }
+          });
+        }
+      }
+    }
+
+    const allUserIds = Array.from(winnerEventsMap.keys());
+
+    if (!allUserIds.length) {
+      return [];
+    }
+
+    const winners = await this.prisma.player.findMany({
+      where: {
+        id: { in: Array.from(allUserIds) },
+        active: true,
+      },
+    });
+
+    const sortedPlayers = winners
+      .map((player) => {
+        const totalEvents = userTotalEventsMap.get(player.id)?.length || 0;
+        const eventsWon = winnerEventsMap.get(player.id)?.length || 0;
+        return {
+          player,
+          eventsWon,
+          totalEvents,
+        };
+      })
+      .sort((a, b) => b.eventsWon - a.eventsWon)
+      .slice(0, limit);
+
+    return sortedPlayers.map((item, index) => ({
+      rank: index + 1,
+      player: this.mapPlayerToResponseDto(item.player),
+      value: item.eventsWon,
+      metric: 'eventsWon',
+      totalEvents: item.totalEvents,
+      eventsWon: item.eventsWon,
+    }));
+  }
+
+  async getTopPlayersByGamesPlayed(limit: number = 10, filters?: RankingFiltersDto): Promise<RankingResponseDto[]> {
+    // Ensure limit is a number
+    const limitNumber = typeof limit === 'string' ? parseInt(limit, 10) : limit;
+    const players = await this.prisma.player.findMany({
+      where: {
+        active: true,
+      },
+      orderBy: {
+        totalGames: 'desc',
+      },
+      take: limitNumber,
+    });
+
+    return players.map((player, index) => ({
+      rank: index + 1,
+      player: this.mapPlayerToResponseDto(player),
+      value: player.totalGames,
+      metric: 'gamesPlayed',
+    }));
+  }
+
+  async getTopPlayersByWonEventsGrouped(
     limit: number = 10,
     filters?: RankingFiltersDto,
-  ): Promise<RankingResponseDto[]> {
+  ): Promise<GroupedRankingResponseDto> {
+    const rankings = await this.getTopPlayersByWonEvents(limit, filters);
+    return this.groupRankingsByGender(rankings);
+  }
+
+  async getTopPlayersByWinRateGrouped(
+    limit: number = 10,
+    filters?: RankingFiltersDto,
+  ): Promise<GroupedRankingResponseDto> {
+    const rankings = await this.getTopPlayersByWinRate(limit, filters);
+    return this.groupRankingsByGender(rankings);
+  }
+
+  async getTopPlayersByGamesPlayedGrouped(
+    limit: number = 10,
+    filters?: RankingFiltersDto,
+  ): Promise<GroupedRankingResponseDto> {
+    const rankings = await this.getTopPlayersByGamesPlayed(limit, filters);
+    return this.groupRankingsByGender(rankings);
+  }
+
+  async getTopPlayersByLowestLosses(limit: number = 10, filters?: RankingFiltersDto): Promise<RankingResponseDto[]> {
+    // Ensure limit is a number
+    const limitNumber = typeof limit === 'string' ? parseInt(limit, 10) : limit;
     const players = await this.prisma.player.findMany({
       where: {
         active: true,
@@ -292,7 +416,7 @@ export class RankingsService {
       orderBy: {
         totalLosses: 'asc',
       },
-      take: limit,
+      take: limitNumber,
     });
 
     return players.map((player, index) => ({
@@ -322,10 +446,7 @@ export class RankingsService {
 
     const playerStats = await Promise.all(
       players.map(async (player) => {
-        const stats = await this.playerStatisticsService.getPlayerStats(
-          player.id,
-          dateRange,
-        );
+        const stats = await this.playerStatisticsService.getPlayerStats(player.id, dateRange);
         return {
           player,
           pointsDifference: stats.pointsDifference,
@@ -341,14 +462,10 @@ export class RankingsService {
         select: { userId: true },
       });
       const eventPlayerIds = new Set(eventMemberIds.map((em) => em.userId));
-      filteredStats = playerStats.filter((ps) =>
-        eventPlayerIds.has(ps.player.id),
-      );
+      filteredStats = playerStats.filter((ps) => eventPlayerIds.has(ps.player.id));
     }
 
-    const sortedStats = filteredStats
-      .sort((a, b) => b.pointsDifference - a.pointsDifference)
-      .slice(0, limit);
+    const sortedStats = filteredStats.sort((a, b) => b.pointsDifference - a.pointsDifference).slice(0, limit);
 
     return sortedStats.map((stat, index) => ({
       rank: index + 1,
@@ -358,9 +475,7 @@ export class RankingsService {
     }));
   }
 
-  async getBestTeamCombinations(
-    limit: number = 5,
-  ): Promise<TeamCombinationResponseDto[]> {
+  async getBestTeamCombinations(limit: number = 5): Promise<TeamCombinationResponseDto[]> {
     // Get all games
     const games = await this.prisma.game.findMany({
       orderBy: { date: 'desc' },
@@ -465,18 +580,11 @@ export class RankingsService {
         ...stats,
         player1: playerMap.get(stats.player1Id),
         player2: playerMap.get(stats.player2Id),
-        winRate:
-          stats.gamesPlayed > 0
-            ? Math.round((stats.wins / stats.gamesPlayed) * 100 * 100) / 100
-            : 0,
+        winRate: stats.gamesPlayed > 0 ? Math.round((stats.wins / stats.gamesPlayed) * 100 * 100) / 100 : 0,
       }))
       .filter(
         (stats) =>
-          stats.gamesPlayed > 0 &&
-          stats.player1 &&
-          stats.player2 &&
-          stats.player1.active &&
-          stats.player2.active,
+          stats.gamesPlayed > 0 && stats.player1 && stats.player2 && stats.player1.active && stats.player2.active,
       ) // Only include teams that have played at least one game and both players are active
       .sort((a, b) => {
         // Sort by win rate first, then by wins, then by games played
@@ -505,3 +613,14 @@ export class RankingsService {
     }));
   }
 }
+
+const top = {
+  '1': ['f6908ef4-b100-4e8c-bbef-2d59cb52bc8a'], // Yevhen Sh
+  '2': ['5a17e842-2bf0-4ea9-827a-0f70df3028c5'], // Alex
+  '3': ['9575ce0f-2d94-4e84-ad9d-ec118f193913'], // Taras
+  '4': ['c04cff53-48b1-43cc-99d6-50c5ce280840'], // Viktor
+  '5': ['43a38877-a066-4907-be74-3ad570e4b7af'], // Maciej
+  '6': ['5b5516c1-e9ff-4ea1-bbe4-7c5d34a218d3'], // Alina Ch
+  '7': ['a7539a33-1cf9-4f7e-89d3-05a35d073526'], // Vitalina
+  '8': ['8553cb6a-5d39-4b34-93c9-d0aef1d9b64d'], // Yevhen Ul
+};

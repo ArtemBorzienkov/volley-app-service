@@ -27,9 +27,9 @@ export class GamesController {
   }
 
   @Get()
-  async findAll(@Query() query: GamesQueryDto): Promise<GameResponseDto[]> {
-    const limit = query.limit || 5;
-    return this.gamesService.findAll(limit);
+  async findAll(@Query() query: GamesQueryDto): Promise<{ games: GameResponseDto[]; allGamesCount: number }> {
+    const limit = query.limit || 200;
+    return this.gamesService.findAllWithCount(limit);
   }
 
   @Get(':id')

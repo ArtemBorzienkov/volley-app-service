@@ -5,4 +5,6 @@ export class RankingResponseDto {
   player: PlayerResponseDto;
   value: number;
   metric: string;
+  totalEvents?: number; // Total events participated in (for eventsWon metric)
+  eventsWon?: number; // Events won (for eventsWon metric)
 }

@@ -90,6 +90,21 @@ export class GamesService {
     return games.map((game) => this.mapToResponseDto(game));
   }
 
+  async findAllWithCount(limit: number = 5): Promise<{ games: GameResponseDto[]; allGamesCount: number }> {
+    const [games, allGamesCount] = await Promise.all([
+      this.prisma.game.findMany({
+        orderBy: { date: 'desc' },
+        take: limit,
+      }),
+      this.prisma.game.count(),
+    ]);
+
+    return {
+      games: games.map((game) => this.mapToResponseDto(game)),
+      allGamesCount,
+    };
+  }
+
   async findOne(id: string): Promise<GameResponseDto> {
     const game = await this.prisma.game.findUnique({
       where: { id },
