@@ -305,9 +305,11 @@ export class RankingsService {
   }
 
   async getTopPlayersByWonEvents(limit: number = 10, filters?: RankingFiltersDto): Promise<RankingResponseDto[]> {
-    // Maps to store arrays of event IDs
-    const userTotalEventsMap = new Map<string, string[]>(); // userId: [eventId1, eventId2, ...]
-    const winnerEventsMap = new Map<string, string[]>(); // userId: [eventId1, eventId2, ...]
+    // Maps to store medal counts per player
+    const goldMedalsMap = new Map<string, number>(); // userId: count
+    const silverMedalsMap = new Map<string, number>(); // userId: count
+    const bronzeMedalsMap = new Map<string, number>(); // userId: count
+    const userTotalEventsMap = new Map<string, number>(); // userId: total count of all places
 
     const events = await this.prisma.event.findMany({
       where: {},
@@ -317,7 +319,7 @@ export class RankingsService {
       return [];
     }
 
-    // Build winnerEventsMap from event data places
+    // Count medals from event data places
     for (const event of events) {
       // Check if event has places data
       if (!event.data || typeof event.data !== 'object') {
@@ -325,61 +327,85 @@ export class RankingsService {
       }
 
       for (const [place, playerIds] of Object.entries(event.data as Record<string, string[]>)) {
-        playerIds.forEach((playerId) => {
-          if (userTotalEventsMap.has(playerId)) {
-            const existingPlayerPlaces = userTotalEventsMap.get(playerId);
-            userTotalEventsMap.set(playerId, [...existingPlayerPlaces, place]);
-          } else {
-            userTotalEventsMap.set(playerId, [place]);
+        // Ensure playerIds is an array
+        const playerIdArray = Array.isArray(playerIds) ? playerIds : [];
+        
+        playerIdArray.forEach((playerId) => {
+          if (typeof playerId !== 'string') return;
+
+          // Count total events (all places)
+          userTotalEventsMap.set(playerId, (userTotalEventsMap.get(playerId) || 0) + 1);
+
+          // Count medals based on place
+          if (place === '1') {
+            goldMedalsMap.set(playerId, (goldMedalsMap.get(playerId) || 0) + 1);
+          } else if (place === '2') {
+            silverMedalsMap.set(playerId, (silverMedalsMap.get(playerId) || 0) + 1);
+          } else if (place === '3') {
+            bronzeMedalsMap.set(playerId, (bronzeMedalsMap.get(playerId) || 0) + 1);
           }
         });
-
-        if (place === '1') {
-          playerIds.forEach((playerId) => {
-            if (winnerEventsMap.has(playerId)) {
-              const existingPlayerEvents = winnerEventsMap.get(playerId);
-              winnerEventsMap.set(playerId, [...existingPlayerEvents, event.id]);
-            } else {
-              winnerEventsMap.set(playerId, [event.id]);
-            }
-          });
-        }
       }
     }
 
-    const allUserIds = Array.from(winnerEventsMap.keys());
+    // Get all unique player IDs who have participated in events
+    const allUserIds = Array.from(new Set([
+      ...Array.from(goldMedalsMap.keys()),
+      ...Array.from(silverMedalsMap.keys()),
+      ...Array.from(bronzeMedalsMap.keys()),
+      ...Array.from(userTotalEventsMap.keys()),
+    ]));
 
     if (!allUserIds.length) {
       return [];
     }
 
-    const winners = await this.prisma.player.findMany({
+    const players = await this.prisma.player.findMany({
       where: {
-        id: { in: Array.from(allUserIds) },
+        id: { in: allUserIds },
         active: true,
       },
     });
 
     // Don't apply limit here - let groupRankingsByGender handle it
-    const sortedPlayers = winners
+    const sortedPlayers = players
       .map((player) => {
-        const totalEvents = userTotalEventsMap.get(player.id)?.length || 0;
-        const eventsWon = winnerEventsMap.get(player.id)?.length || 0;
+        const gold = goldMedalsMap.get(player.id) || 0;
+        const silver = silverMedalsMap.get(player.id) || 0;
+        const bronze = bronzeMedalsMap.get(player.id) || 0;
+        const totalEvents = userTotalEventsMap.get(player.id) || 0;
         return {
           player,
-          eventsWon,
+          gold,
+          silver,
+          bronze,
           totalEvents,
         };
       })
-      .sort((a, b) => b.eventsWon - a.eventsWon);
+      .sort((a, b) => {
+        // First sort by gold (descending)
+        if (b.gold !== a.gold) {
+          return b.gold - a.gold;
+        }
+        // Then by silver (descending)
+        if (b.silver !== a.silver) {
+          return b.silver - a.silver;
+        }
+        // Finally by bronze (descending)
+        return b.bronze - a.bronze;
+      });
 
     const rankings = sortedPlayers.map((item) => ({
       rank: 0, // Will be set in groupRankingsByGender
       player: this.mapPlayerToResponseDto(item.player),
-      value: item.eventsWon,
+      value: {
+        gold: item.gold,
+        silver: item.silver,
+        bronze: item.bronze,
+      },
       metric: 'eventsWon',
       totalEvents: item.totalEvents,
-      eventsWon: item.eventsWon,
+      eventsWon: item.gold, // Keep for backward compatibility
     }));
 
     return rankings;
