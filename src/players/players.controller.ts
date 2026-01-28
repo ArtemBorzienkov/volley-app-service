@@ -10,6 +10,7 @@ import {
 import { PlayersService } from './players.service';
 import { CreatePlayerDto } from './dto/create-player.dto';
 import { PlayerResponseDto } from './dto/player-response.dto';
+import { FullPlayerResponseDto } from './dto/full-player-response.dto';
 import { EventResponseDto } from '../events/dto/event-response.dto';
 
 @Controller('players')
@@ -27,6 +28,11 @@ export class PlayersController {
   @Get()
   async findAllActive(): Promise<PlayerResponseDto[]> {
     return this.playersService.findAllActive();
+  }
+
+  @Get('full')
+  async findAllFull(): Promise<FullPlayerResponseDto[]> {
+    return this.playersService.findAllFull();
   }
 
   @Get(':id/events')
