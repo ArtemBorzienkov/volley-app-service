@@ -9,5 +9,4 @@ export class PlayerResponseDto {
   totalWins: number;
   totalLosses: number;
   createdAt: Date;
-  updatedAt: Date;
 }

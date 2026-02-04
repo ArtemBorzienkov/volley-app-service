@@ -1,8 +1,4 @@
-import {
-  Injectable,
-  NotFoundException,
-  BadRequestException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateGameDto } from './dto/create-game.dto';
 import { UpdateGameDto } from './dto/update-game.dto';
@@ -27,9 +23,7 @@ export class GamesService {
     });
 
     if (!event) {
-      throw new NotFoundException(
-        `Event with ID ${createGameDto.eventId} not found`,
-      );
+      throw new NotFoundException(`Event with ID ${createGameDto.eventId} not found`);
     }
 
     const gameDate = new Date(createGameDto.date);
@@ -54,26 +48,10 @@ export class GamesService {
       const team1Won = createGameDto.team1Points > createGameDto.team2Points;
 
       // Update player statistics
-      await this.updatePlayerStatsForGame(
-        tx,
-        createGameDto.team1Player1Id,
-        team1Won,
-      );
-      await this.updatePlayerStatsForGame(
-        tx,
-        createGameDto.team1Player2Id,
-        team1Won,
-      );
-      await this.updatePlayerStatsForGame(
-        tx,
-        createGameDto.team2Player1Id,
-        !team1Won,
-      );
-      await this.updatePlayerStatsForGame(
-        tx,
-        createGameDto.team2Player2Id,
-        !team1Won,
-      );
+      await this.updatePlayerStatsForGame(tx, createGameDto.team1Player1Id, team1Won);
+      await this.updatePlayerStatsForGame(tx, createGameDto.team1Player2Id, team1Won);
+      await this.updatePlayerStatsForGame(tx, createGameDto.team2Player1Id, !team1Won);
+      await this.updatePlayerStatsForGame(tx, createGameDto.team2Player2Id, !team1Won);
 
       return newGame;
     });
@@ -117,10 +95,7 @@ export class GamesService {
     return this.mapToResponseDto(game);
   }
 
-  async update(
-    id: string,
-    updateGameDto: UpdateGameDto,
-  ): Promise<GameResponseDto> {
+  async update(id: string, updateGameDto: UpdateGameDto): Promise<GameResponseDto> {
     const existingGame = await this.prisma.game.findUnique({
       where: { id },
     });
@@ -154,55 +129,28 @@ export class GamesService {
       throw new NotFoundException(`Event with ID ${eventId} not found`);
     }
 
-    const gameDate = updateGameDto.date
-      ? new Date(updateGameDto.date)
-      : existingGame.date;
+    const gameDate = updateGameDto.date ? new Date(updateGameDto.date) : existingGame.date;
 
     // Update game and recalculate statistics in a transaction
     const updatedGame = await this.prisma.$transaction(async (tx) => {
       // First, revert old statistics
       const oldTeam1Won = existingGame.team1Points > existingGame.team2Points;
-      await this.revertPlayerStatsForGame(
-        tx,
-        existingGame.team1Player1Id,
-        oldTeam1Won,
-      );
-      await this.revertPlayerStatsForGame(
-        tx,
-        existingGame.team1Player2Id,
-        oldTeam1Won,
-      );
-      await this.revertPlayerStatsForGame(
-        tx,
-        existingGame.team2Player1Id,
-        !oldTeam1Won,
-      );
-      await this.revertPlayerStatsForGame(
-        tx,
-        existingGame.team2Player2Id,
-        !oldTeam1Won,
-      );
+      await this.revertPlayerStatsForGame(tx, existingGame.team1Player1Id, oldTeam1Won);
+      await this.revertPlayerStatsForGame(tx, existingGame.team1Player2Id, oldTeam1Won);
+      await this.revertPlayerStatsForGame(tx, existingGame.team2Player1Id, !oldTeam1Won);
+      await this.revertPlayerStatsForGame(tx, existingGame.team2Player2Id, !oldTeam1Won);
 
       // Update game
       const updateData: any = {};
-      if (updateGameDto.eventId !== undefined)
-        updateData.eventId = updateGameDto.eventId;
-      if (updateGameDto.team1Player1Id !== undefined)
-        updateData.team1Player1Id = updateGameDto.team1Player1Id;
-      if (updateGameDto.team1Player2Id !== undefined)
-        updateData.team1Player2Id = updateGameDto.team1Player2Id;
-      if (updateGameDto.team2Player1Id !== undefined)
-        updateData.team2Player1Id = updateGameDto.team2Player1Id;
-      if (updateGameDto.team2Player2Id !== undefined)
-        updateData.team2Player2Id = updateGameDto.team2Player2Id;
-      if (updateGameDto.team1Points !== undefined)
-        updateData.team1Points = updateGameDto.team1Points;
-      if (updateGameDto.team2Points !== undefined)
-        updateData.team2Points = updateGameDto.team2Points;
-      if (updateGameDto.date !== undefined)
-        updateData.date = new Date(updateGameDto.date);
-      if (updateGameDto.location !== undefined)
-        updateData.location = updateGameDto.location;
+      if (updateGameDto.eventId !== undefined) updateData.eventId = updateGameDto.eventId;
+      if (updateGameDto.team1Player1Id !== undefined) updateData.team1Player1Id = updateGameDto.team1Player1Id;
+      if (updateGameDto.team1Player2Id !== undefined) updateData.team1Player2Id = updateGameDto.team1Player2Id;
+      if (updateGameDto.team2Player1Id !== undefined) updateData.team2Player1Id = updateGameDto.team2Player1Id;
+      if (updateGameDto.team2Player2Id !== undefined) updateData.team2Player2Id = updateGameDto.team2Player2Id;
+      if (updateGameDto.team1Points !== undefined) updateData.team1Points = updateGameDto.team1Points;
+      if (updateGameDto.team2Points !== undefined) updateData.team2Points = updateGameDto.team2Points;
+      if (updateGameDto.date !== undefined) updateData.date = new Date(updateGameDto.date);
+      if (updateGameDto.location !== undefined) updateData.location = updateGameDto.location;
 
       const game = await tx.game.update({
         where: { id },
@@ -211,26 +159,10 @@ export class GamesService {
 
       // Apply new statistics
       const newTeam1Won = game.team1Points > game.team2Points;
-      await this.updatePlayerStatsForGame(
-        tx,
-        game.team1Player1Id,
-        newTeam1Won,
-      );
-      await this.updatePlayerStatsForGame(
-        tx,
-        game.team1Player2Id,
-        newTeam1Won,
-      );
-      await this.updatePlayerStatsForGame(
-        tx,
-        game.team2Player1Id,
-        !newTeam1Won,
-      );
-      await this.updatePlayerStatsForGame(
-        tx,
-        game.team2Player2Id,
-        !newTeam1Won,
-      );
+      await this.updatePlayerStatsForGame(tx, game.team1Player1Id, newTeam1Won);
+      await this.updatePlayerStatsForGame(tx, game.team1Player2Id, newTeam1Won);
+      await this.updatePlayerStatsForGame(tx, game.team2Player1Id, !newTeam1Won);
+      await this.updatePlayerStatsForGame(tx, game.team2Player2Id, !newTeam1Won);
 
       return game;
     });
@@ -251,26 +183,10 @@ export class GamesService {
     await this.prisma.$transaction(async (tx) => {
       // Revert statistics
       const team1Won = game.team1Points > game.team2Points;
-      await this.revertPlayerStatsForGame(
-        tx,
-        game.team1Player1Id,
-        team1Won,
-      );
-      await this.revertPlayerStatsForGame(
-        tx,
-        game.team1Player2Id,
-        team1Won,
-      );
-      await this.revertPlayerStatsForGame(
-        tx,
-        game.team2Player1Id,
-        !team1Won,
-      );
-      await this.revertPlayerStatsForGame(
-        tx,
-        game.team2Player2Id,
-        !team1Won,
-      );
+      await this.revertPlayerStatsForGame(tx, game.team1Player1Id, team1Won);
+      await this.revertPlayerStatsForGame(tx, game.team1Player2Id, team1Won);
+      await this.revertPlayerStatsForGame(tx, game.team2Player1Id, !team1Won);
+      await this.revertPlayerStatsForGame(tx, game.team2Player2Id, !team1Won);
 
       // Delete game
       await tx.game.delete({
@@ -287,16 +203,12 @@ export class GamesService {
   ): Promise<void> {
     // Check that team1 has 2 unique players
     if (team1Player1Id === team1Player2Id) {
-      throw new BadRequestException(
-        'Team 1 must have 2 different players',
-      );
+      throw new BadRequestException('Team 1 must have 2 different players');
     }
 
     // Check that team2 has 2 unique players
     if (team2Player1Id === team2Player2Id) {
-      throw new BadRequestException(
-        'Team 2 must have 2 different players',
-      );
+      throw new BadRequestException('Team 2 must have 2 different players');
     }
 
     // Check that no player is on both teams
@@ -305,19 +217,12 @@ export class GamesService {
 
     for (const playerId of team1Players) {
       if (team2Players.includes(playerId)) {
-        throw new BadRequestException(
-          `Player ${playerId} cannot be on both teams`,
-        );
+        throw new BadRequestException(`Player ${playerId} cannot be on both teams`);
       }
     }
 
     // Verify all players exist
-    const allPlayerIds = [
-      team1Player1Id,
-      team1Player2Id,
-      team2Player1Id,
-      team2Player2Id,
-    ];
+    const allPlayerIds = [team1Player1Id, team1Player2Id, team2Player1Id, team2Player2Id];
     const uniquePlayerIds = [...new Set(allPlayerIds)];
 
     const players = await this.prisma.player.findMany({
@@ -330,23 +235,21 @@ export class GamesService {
 
     if (players.length !== uniquePlayerIds.length) {
       const foundIds = players.map((p) => p.id);
-      const missingIds = uniquePlayerIds.filter(
-        (id) => !foundIds.includes(id),
-      );
-      throw new NotFoundException(
-        `Players not found: ${missingIds.join(', ')}`,
-      );
+      const missingIds = uniquePlayerIds.filter((id) => !foundIds.includes(id));
+      throw new NotFoundException(`Players not found: ${missingIds.join(', ')}`);
     }
   }
 
-  private async updatePlayerStatsForGame(
-    tx: any,
-    playerId: string,
-    won: boolean,
-  ): Promise<void> {
-    await tx.player.update({
-      where: { id: playerId },
-      data: {
+  private async updatePlayerStatsForGame(tx: any, playerId: string, won: boolean): Promise<void> {
+    await tx.playerStats.upsert({
+      where: { playerId },
+      create: {
+        playerId,
+        totalGames: 1,
+        totalWins: won ? 1 : 0,
+        totalLosses: won ? 0 : 1,
+      },
+      update: {
         totalGames: { increment: 1 },
         totalWins: won ? { increment: 1 } : undefined,
         totalLosses: won ? undefined : { increment: 1 },
@@ -354,19 +257,21 @@ export class GamesService {
     });
   }
 
-  private async revertPlayerStatsForGame(
-    tx: any,
-    playerId: string,
-    won: boolean,
-  ): Promise<void> {
-    await tx.player.update({
-      where: { id: playerId },
-      data: {
-        totalGames: { decrement: 1 },
-        totalWins: won ? { decrement: 1 } : undefined,
-        totalLosses: won ? undefined : { decrement: 1 },
-      },
+  private async revertPlayerStatsForGame(tx: any, playerId: string, won: boolean): Promise<void> {
+    const stats = await tx.playerStats.findUnique({
+      where: { playerId },
     });
+
+    if (stats) {
+      await tx.playerStats.update({
+        where: { playerId },
+        data: {
+          totalGames: { decrement: 1 },
+          totalWins: won ? { decrement: 1 } : undefined,
+          totalLosses: won ? undefined : { decrement: 1 },
+        },
+      });
+    }
   }
 
   private mapToResponseDto(game: any): GameResponseDto {

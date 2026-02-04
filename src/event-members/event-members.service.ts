@@ -1,8 +1,4 @@
-import {
-  Injectable,
-  NotFoundException,
-  ConflictException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEventMemberDto } from './dto/create-event-member.dto';
 import { EventMemberResponseDto } from './dto/event-member-response.dto';
@@ -13,18 +9,14 @@ import { DuplicateEventMemberException } from '../common/exceptions/duplicate-ev
 export class EventMembersService {
   constructor(private prisma: PrismaService) {}
 
-  async create(
-    createEventMemberDto: CreateEventMemberDto,
-  ): Promise<EventMemberResponseDto> {
+  async create(createEventMemberDto: CreateEventMemberDto): Promise<EventMemberResponseDto> {
     // Validate player exists
     const player = await this.prisma.player.findUnique({
       where: { id: createEventMemberDto.userId },
     });
 
     if (!player) {
-      throw new NotFoundException(
-        `Player with ID ${createEventMemberDto.userId} not found`,
-      );
+      throw new NotFoundException(`Player with ID ${createEventMemberDto.userId} not found`);
     }
 
     // Validate event exists
@@ -33,9 +25,7 @@ export class EventMembersService {
     });
 
     if (!event) {
-      throw new NotFoundException(
-        `Event with ID ${createEventMemberDto.eventId} not found`,
-      );
+      throw new NotFoundException(`Event with ID ${createEventMemberDto.eventId} not found`);
     }
 
     // Check for duplicate registration
@@ -49,10 +39,7 @@ export class EventMembersService {
     });
 
     if (existingMember) {
-      throw new DuplicateEventMemberException(
-        createEventMemberDto.userId,
-        createEventMemberDto.eventId,
-      );
+      throw new DuplicateEventMemberException(createEventMemberDto.userId, createEventMemberDto.eventId);
     }
 
     const eventMember = await this.prisma.eventMember.create({
@@ -69,7 +56,11 @@ export class EventMembersService {
     const eventMembers = await this.prisma.eventMember.findMany({
       where: { eventId },
       include: {
-        player: true,
+        player: {
+          include: {
+            playerStats: true,
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -124,10 +115,7 @@ export class EventMembersService {
     });
   }
 
-  private mapToResponseDto(
-    eventMember: any,
-    includeRelations = false,
-  ): EventMemberResponseDto {
+  private mapToResponseDto(eventMember: any, includeRelations = false): EventMemberResponseDto {
     const dto: EventMemberResponseDto = {
       id: eventMember.id,
       userId: eventMember.userId,
@@ -144,11 +132,10 @@ export class EventMembersService {
           avatar: eventMember.player.avatar,
           gender: eventMember.player.gender,
           active: eventMember.player.active,
-          totalGames: eventMember.player.totalGames,
-          totalWins: eventMember.player.totalWins,
-          totalLosses: eventMember.player.totalLosses,
+          totalGames: eventMember.player.playerStats?.totalGames ?? 0,
+          totalWins: eventMember.player.playerStats?.totalWins ?? 0,
+          totalLosses: eventMember.player.playerStats?.totalLosses ?? 0,
           createdAt: eventMember.player.createdAt,
-          updatedAt: eventMember.player.updatedAt,
         };
       }
 

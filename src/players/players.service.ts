@@ -8,10 +8,7 @@ import { PlayerStatisticsService } from '../statistics/player-statistics.service
 
 @Injectable()
 export class PlayersService {
-  constructor(
-    private prisma: PrismaService,
-    private playerStatisticsService: PlayerStatisticsService,
-  ) {}
+  constructor(private prisma: PrismaService, private playerStatisticsService: PlayerStatisticsService) {}
 
   async create(createPlayerDto: CreatePlayerDto): Promise<PlayerResponseDto> {
     // Check if player with tgId already exists (only if tgId is provided)
@@ -21,9 +18,7 @@ export class PlayersService {
       });
 
       if (existingPlayer) {
-        throw new ConflictException(
-          `Player with tgId ${createPlayerDto.tgId} already exists`,
-        );
+        throw new ConflictException(`Player with tgId ${createPlayerDto.tgId} already exists`);
       }
     }
 
@@ -34,6 +29,16 @@ export class PlayersService {
         avatar: createPlayerDto.avatar,
         gender: createPlayerDto.gender,
         active: createPlayerDto.active ?? true,
+        playerStats: {
+          create: {
+            totalGames: 0,
+            totalWins: 0,
+            totalLosses: 0,
+          },
+        },
+      },
+      include: {
+        playerStats: true,
       },
     });
 
@@ -44,6 +49,9 @@ export class PlayersService {
     const players = await this.prisma.player.findMany({
       where: {
         active: true,
+      },
+      include: {
+        playerStats: true,
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -126,10 +134,8 @@ export class PlayersService {
 
         // Map games to 'win' or 'lose' results
         const recentGamesResults = recentGames.map((game) => {
-          const isTeam1 =
-            game.team1Player1Id === player.id || game.team1Player2Id === player.id;
-          const isTeam2 =
-            game.team2Player1Id === player.id || game.team2Player2Id === player.id;
+          const isTeam1 = game.team1Player1Id === player.id || game.team1Player2Id === player.id;
+          const isTeam2 = game.team2Player1Id === player.id || game.team2Player2Id === player.id;
 
           if (isTeam1) {
             return game.team1Points > game.team2Points ? 'win' : 'lose';
@@ -200,11 +206,10 @@ export class PlayersService {
       avatar: player.avatar,
       gender: player.gender,
       active: player.active,
-      totalGames: player.totalGames,
-      totalWins: player.totalWins,
-      totalLosses: player.totalLosses,
+      totalGames: player.playerStats?.totalGames ?? 0,
+      totalWins: player.playerStats?.totalWins ?? 0,
+      totalLosses: player.playerStats?.totalLosses ?? 0,
       createdAt: player.createdAt,
-      updatedAt: player.updatedAt,
     };
   }
 }

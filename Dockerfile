@@ -1,4 +1,4 @@
-FROM node:16
+FROM node:20
 
 # Create app directory
 WORKDIR /usr/app
@@ -18,6 +18,12 @@ RUN npx prisma generate
 
 # Bundle app source
 COPY . .
+
+# Apply migrations before build
+# migrate deploy applies pending migrations without creating new ones (production-safe)
+# This requires DATABASE_URL to be available at build time via build args or env
+ARG DATABASE_URL
+RUN if [ -n "$DATABASE_URL" ]; then npx prisma migrate deploy; else echo "Skipping migrations - DATABASE_URL not provided at build time"; fi
 
 # Build the application
 RUN npm run build

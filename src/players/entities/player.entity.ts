@@ -5,9 +5,5 @@ export class Player {
   avatar?: string;
   gender?: string;
   active: boolean;
-  totalGames: number;
-  totalWins: number;
-  totalLosses: number;
   createdAt: Date;
-  updatedAt: Date;
 }

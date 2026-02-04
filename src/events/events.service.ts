@@ -1,8 +1,4 @@
-import {
-  Injectable,
-  NotFoundException,
-  BadRequestException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
@@ -20,9 +16,7 @@ export class EventsService {
     });
 
     if (!creator) {
-      throw new NotFoundException(
-        `Player with ID ${createEventDto.createdBy} not found`,
-      );
+      throw new NotFoundException(`Player with ID ${createEventDto.createdBy} not found`);
     }
 
     const event = await this.prisma.event.create({
@@ -37,9 +31,7 @@ export class EventsService {
     return this.mapToResponseDto(event);
   }
 
-  async createWithGames(
-    createEventWithGamesDto: CreateEventWithGamesDto,
-  ): Promise<EventResponseDto> {
+  async createWithGames(createEventWithGamesDto: CreateEventWithGamesDto): Promise<EventResponseDto> {
     // Validate creator if provided
     if (createEventWithGamesDto.createdBy) {
       const creator = await this.prisma.player.findUnique({
@@ -47,9 +39,7 @@ export class EventsService {
       });
 
       if (!creator) {
-        throw new NotFoundException(
-          `Player with ID ${createEventWithGamesDto.createdBy} not found`,
-        );
+        throw new NotFoundException(`Player with ID ${createEventWithGamesDto.createdBy} not found`);
       }
     }
 
@@ -127,26 +117,10 @@ export class EventsService {
         });
 
         // Update player statistics
-        await this.updatePlayerStatsForGame(
-          tx,
-          gameDto.team1Player1Id,
-          team1Won,
-        );
-        await this.updatePlayerStatsForGame(
-          tx,
-          gameDto.team1Player2Id,
-          team1Won,
-        );
-        await this.updatePlayerStatsForGame(
-          tx,
-          gameDto.team2Player1Id,
-          !team1Won,
-        );
-        await this.updatePlayerStatsForGame(
-          tx,
-          gameDto.team2Player2Id,
-          !team1Won,
-        );
+        await this.updatePlayerStatsForGame(tx, gameDto.team1Player1Id, team1Won);
+        await this.updatePlayerStatsForGame(tx, gameDto.team1Player2Id, team1Won);
+        await this.updatePlayerStatsForGame(tx, gameDto.team2Player1Id, !team1Won);
+        await this.updatePlayerStatsForGame(tx, gameDto.team2Player2Id, !team1Won);
 
         createdGames.push(game);
       }
@@ -166,11 +140,7 @@ export class EventsService {
     return events.map((event) => this.mapToResponseDto(event));
   }
 
-  async findOne(
-    id: string,
-    includeGames = false,
-    includeMembers = false,
-  ): Promise<EventResponseDto> {
+  async findOne(id: string, includeGames = false, includeMembers = false): Promise<EventResponseDto> {
     const event = await this.prisma.event.findUnique({
       where: { id },
       include: {
@@ -186,10 +156,7 @@ export class EventsService {
     return this.mapToResponseDto(event, includeGames, includeMembers);
   }
 
-  async update(
-    id: string,
-    updateEventDto: UpdateEventDto,
-  ): Promise<EventResponseDto> {
+  async update(id: string, updateEventDto: UpdateEventDto): Promise<EventResponseDto> {
     const existingEvent = await this.prisma.event.findUnique({
       where: { id },
     });
@@ -215,9 +182,7 @@ export class EventsService {
       });
 
       if (!creator) {
-        throw new NotFoundException(
-          `Player with ID ${updateEventDto.createdBy} not found`,
-        );
+        throw new NotFoundException(`Player with ID ${updateEventDto.createdBy} not found`);
       }
 
       updateData.createdBy = updateEventDto.createdBy;
@@ -249,11 +214,7 @@ export class EventsService {
     });
   }
 
-  private mapToResponseDto(
-    event: any,
-    includeGames = false,
-    includeMembers = false,
-  ): EventResponseDto {
+  private mapToResponseDto(event: any, includeGames = false, includeMembers = false): EventResponseDto {
     const dto: EventResponseDto = {
       id: event.id,
       name: event.name,
@@ -302,16 +263,12 @@ export class EventsService {
   ): Promise<void> {
     // Check that team1 has 2 unique players
     if (team1Player1Id === team1Player2Id) {
-      throw new BadRequestException(
-        'Team 1 must have 2 different players',
-      );
+      throw new BadRequestException('Team 1 must have 2 different players');
     }
 
     // Check that team2 has 2 unique players
     if (team2Player1Id === team2Player2Id) {
-      throw new BadRequestException(
-        'Team 2 must have 2 different players',
-      );
+      throw new BadRequestException('Team 2 must have 2 different players');
     }
 
     // Check that no player is on both teams
@@ -320,19 +277,12 @@ export class EventsService {
 
     for (const playerId of team1Players) {
       if (team2Players.includes(playerId)) {
-        throw new BadRequestException(
-          `Player ${playerId} cannot be on both teams`,
-        );
+        throw new BadRequestException(`Player ${playerId} cannot be on both teams`);
       }
     }
 
     // Verify all players exist
-    const allPlayerIds = [
-      team1Player1Id,
-      team1Player2Id,
-      team2Player1Id,
-      team2Player2Id,
-    ];
+    const allPlayerIds = [team1Player1Id, team1Player2Id, team2Player1Id, team2Player2Id];
     const uniquePlayerIds = [...new Set(allPlayerIds)];
 
     const players = await this.prisma.player.findMany({
@@ -345,23 +295,21 @@ export class EventsService {
 
     if (players.length !== uniquePlayerIds.length) {
       const foundIds = players.map((p) => p.id);
-      const missingIds = uniquePlayerIds.filter(
-        (id) => !foundIds.includes(id),
-      );
-      throw new NotFoundException(
-        `Players not found: ${missingIds.join(', ')}`,
-      );
+      const missingIds = uniquePlayerIds.filter((id) => !foundIds.includes(id));
+      throw new NotFoundException(`Players not found: ${missingIds.join(', ')}`);
     }
   }
 
-  private async updatePlayerStatsForGame(
-    tx: any,
-    playerId: string,
-    won: boolean,
-  ): Promise<void> {
-    await tx.player.update({
-      where: { id: playerId },
-      data: {
+  private async updatePlayerStatsForGame(tx: any, playerId: string, won: boolean): Promise<void> {
+    await tx.playerStats.upsert({
+      where: { playerId },
+      create: {
+        playerId,
+        totalGames: 1,
+        totalWins: won ? 1 : 0,
+        totalLosses: won ? 0 : 1,
+      },
+      update: {
         totalGames: { increment: 1 },
         totalWins: won ? { increment: 1 } : undefined,
         totalLosses: won ? undefined : { increment: 1 },
@@ -391,12 +339,8 @@ export class EventsService {
 
     if (players.length !== uniquePlayerIds.length) {
       const foundIds = players.map((p) => p.id);
-      const missingIds = uniquePlayerIds.filter(
-        (id) => !foundIds.includes(id),
-      );
-      throw new NotFoundException(
-        `Players not found for places: ${missingIds.join(', ')}`,
-      );
+      const missingIds = uniquePlayerIds.filter((id) => !foundIds.includes(id));
+      throw new NotFoundException(`Players not found for places: ${missingIds.join(', ')}`);
     }
   }
 }

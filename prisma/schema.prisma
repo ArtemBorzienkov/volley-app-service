@@ -11,17 +11,13 @@ datasource db {
 }
 
 model Player {
-  id          String   @id @default(uuid())
-  tgId        String?  @unique @map("tg_id")
-  name        String
-  avatar      String?
-  gender      String?
-  active      Boolean  @default(true)
-  totalGames  Int      @default(0) @map("total_games")
-  totalWins   Int      @default(0) @map("total_wins")
-  totalLosses Int      @default(0) @map("total_losses")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  id        String   @id @default(uuid())
+  tgId      String?  @unique @map("tg_id")
+  name      String
+  avatar    String?
+  gender    String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
 
   // Relations - games where player is in team1
   team1GamesAsPlayer1 Game[] @relation("Team1Player1")
@@ -33,9 +29,24 @@ model Player {
   eventMembers EventMember[]
   // Relations - created events
   createdEvents Event[]
+  // Relations - player statistics
+  playerStats PlayerStats?
 
   @@index([tgId])
   @@map("players")
+}
+
+model PlayerStats {
+  id          String   @id @default(uuid())
+  playerId    String   @unique @map("player_id")
+  totalGames  Int      @default(0) @map("total_games")
+  totalWins   Int      @default(0) @map("total_wins")
+  totalLosses Int      @default(0) @map("total_losses")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@map("player_stats")
 }
 
 model Event {
