@@ -157,10 +157,10 @@ export class RankingsService {
       filteredStats = playerStats.filter((ps) => eventPlayerIds.has(ps.player.id));
     }
 
-    // Filter players with at least 1 game and sort by win rate, then by total wins
+    // Filter players with at least 10 games and sort by win rate, then by total wins
     // Don't apply limit here - let groupRankingsByGender handle it
     const sortedStats = filteredStats
-      .filter((ps) => ps.totalGames > 0)
+      .filter((ps) => ps.totalGames >= 10)
       .sort((a, b) => {
         // First sort by win rate (descending)
         if (b.winRate !== a.winRate) {
