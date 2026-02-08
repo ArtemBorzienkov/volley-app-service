@@ -842,25 +842,25 @@ export class RankingsService {
       const favoriteWon = team1IsFavorite ? team1Won : !team1Won;
       const isUnderdogWin = team1IsFavorite ? !team1Won : team1Won;
 
-      if (rankDifference > 250 && favoriteWon) {
+      if (rankDifference > 500 && favoriteWon) {
         // Favorite wins with large difference - no rank change
         rankChange = 0;
-      } else if (rankDifference > 250 && isUnderdogWin) {
+      } else if (rankDifference > 500 && isUnderdogWin) {
         // Underdog wins with large difference - maximum rank change
         rankChange = maxRankChange;
       } else {
         // Get multiplier based on rank difference
         let multiplier: number;
-        if (rankDifference <= 50) {
+        if (rankDifference <= 100) {
           multiplier = isUnderdogWin ? 1.1 : 0.9;
-        } else if (rankDifference <= 100) {
+        } else if (rankDifference > 100 && rankDifference <= 200) {
           multiplier = isUnderdogWin ? 1.15 : 0.85;
-        } else if (rankDifference <= 150) {
+        } else if (rankDifference > 200 && rankDifference <= 300) {
           multiplier = isUnderdogWin ? 1.2 : 0.8;
-        } else if (rankDifference <= 200) {
+        } else if (rankDifference > 300 && rankDifference <= 400) {
           multiplier = isUnderdogWin ? 1.3 : 0.75;
         } else {
-          // 201-250
+          // 400+
           multiplier = isUnderdogWin ? 1.4 : 0.7;
         }
 
