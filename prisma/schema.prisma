@@ -42,6 +42,7 @@ model PlayerStats {
   totalGames  Int      @default(0) @map("total_games")
   totalWins   Int      @default(0) @map("total_wins")
   totalLosses Int      @default(0) @map("total_losses")
+  rank        Int      @default(1000) @map("rank")
   createdAt   DateTime @default(now()) @map("created_at")
 
   player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)

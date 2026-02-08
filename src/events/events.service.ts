@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { RankingsService } from '../rankings/rankings.service';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
 import { EventResponseDto } from './dto/event-response.dto';
@@ -7,7 +8,7 @@ import { CreateEventWithGamesDto } from './dto/create-event-with-games.dto';
 
 @Injectable()
 export class EventsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private rankingsService: RankingsService) {}
 
   async create(createEventDto: CreateEventDto): Promise<EventResponseDto> {
     // Validate that creator (player) exists
@@ -127,6 +128,40 @@ export class EventsService {
 
       return { event, games: createdGames };
     });
+
+    // Update player ranks for each game after transaction completes
+    for (const game of result.games) {
+      // Fetch game with player stats for rank update
+      const gameWithPlayerStats = await this.prisma.game.findUnique({
+        where: { id: game.id },
+        include: {
+          team1Player1: {
+            include: {
+              playerStats: true,
+            },
+          },
+          team1Player2: {
+            include: {
+              playerStats: true,
+            },
+          },
+          team2Player1: {
+            include: {
+              playerStats: true,
+            },
+          },
+          team2Player2: {
+            include: {
+              playerStats: true,
+            },
+          },
+        },
+      });
+
+      if (gameWithPlayerStats) {
+        await this.rankingsService.updatePlayersRankByGameResult(gameWithPlayerStats);
+      }
+    }
 
     // Return event with games included
     return this.mapToResponseDto(result.event, true);

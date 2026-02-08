@@ -1,4 +1,4 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Get, Post, Query } from '@nestjs/common';
 import { RankingsService } from './rankings.service';
 import { RankingFiltersDto } from '../common/dto/ranking-filters.dto';
 import { RankingResponseDto } from './dto/ranking-response.dto';
@@ -10,93 +10,62 @@ export class RankingsController {
   constructor(private readonly rankingsService: RankingsService) {}
 
   @Get('wins')
-  async getTopByWins(
-    @Query() filters: RankingFiltersDto,
-  ): Promise<RankingResponseDto[]> {
-    return this.rankingsService.getTopPlayersByWins(
-      filters.limit || 10,
-      filters,
-    );
+  async getTopByWins(@Query() filters: RankingFiltersDto): Promise<RankingResponseDto[]> {
+    return this.rankingsService.getTopPlayersByWins(filters.limit || 10, filters);
   }
 
   @Get('sets')
-  async getTopBySets(
-    @Query() filters: RankingFiltersDto,
-  ): Promise<RankingResponseDto[]> {
-    return this.rankingsService.getTopPlayersBySetsWon(
-      filters.limit || 10,
-      filters,
-    );
+  async getTopBySets(@Query() filters: RankingFiltersDto): Promise<RankingResponseDto[]> {
+    return this.rankingsService.getTopPlayersBySetsWon(filters.limit || 10, filters);
   }
 
   @Get('tournaments')
-  async getTopByTournaments(
-    @Query() filters: RankingFiltersDto,
-  ): Promise<RankingResponseDto[]> {
-    return this.rankingsService.getTopPlayersByTournamentsWon(
-      filters.limit || 10,
-      filters,
-    );
+  async getTopByTournaments(@Query() filters: RankingFiltersDto): Promise<RankingResponseDto[]> {
+    return this.rankingsService.getTopPlayersByTournamentsWon(filters.limit || 10, filters);
   }
 
   @Get('lowest-losses')
-  async getTopByLowestLosses(
-    @Query() filters: RankingFiltersDto,
-  ): Promise<RankingResponseDto[]> {
-    return this.rankingsService.getTopPlayersByLowestLosses(
-      filters.limit || 10,
-      filters,
-    );
+  async getTopByLowestLosses(@Query() filters: RankingFiltersDto): Promise<RankingResponseDto[]> {
+    return this.rankingsService.getTopPlayersByLowestLosses(filters.limit || 10, filters);
   }
 
   @Get('points-difference')
-  async getTopByPointsDifference(
-    @Query() filters: RankingFiltersDto,
-  ): Promise<RankingResponseDto[]> {
-    return this.rankingsService.getTopPlayersByPointsDifference(
-      filters.limit || 10,
-      filters,
-    );
+  async getTopByPointsDifference(@Query() filters: RankingFiltersDto): Promise<RankingResponseDto[]> {
+    return this.rankingsService.getTopPlayersByPointsDifference(filters.limit || 10, filters);
   }
 
   @Get('won-events')
-  async getTopByWonEvents(
-    @Query() filters: RankingFiltersDto,
-  ): Promise<GroupedRankingResponseDto> {
+  async getTopByWonEvents(@Query() filters: RankingFiltersDto): Promise<GroupedRankingResponseDto> {
     const limit = filters.limit ? Number(filters.limit) : 10;
-    return this.rankingsService.getTopPlayersByWonEventsGrouped(
-      limit,
-      filters,
-    );
+    return this.rankingsService.getTopPlayersByWonEventsGrouped(limit, filters);
   }
 
   @Get('win-rate')
-  async getTopByWinRate(
-    @Query() filters: RankingFiltersDto,
-  ): Promise<GroupedRankingResponseDto> {
+  async getTopByWinRate(@Query() filters: RankingFiltersDto): Promise<GroupedRankingResponseDto> {
     const limit = filters.limit ? Number(filters.limit) : 10;
-    return this.rankingsService.getTopPlayersByWinRateGrouped(
-      limit,
-      filters,
-    );
+    return this.rankingsService.getTopPlayersByWinRateGrouped(limit, filters);
   }
 
   @Get('games-played')
-  async getTopByGamesPlayed(
-    @Query() filters: RankingFiltersDto,
-  ): Promise<GroupedRankingResponseDto> {
+  async getTopByGamesPlayed(@Query() filters: RankingFiltersDto): Promise<GroupedRankingResponseDto> {
     const limit = filters.limit ? Number(filters.limit) : 10;
-    return this.rankingsService.getTopPlayersByGamesPlayedGrouped(
-      limit,
-      filters,
-    );
+    return this.rankingsService.getTopPlayersByGamesPlayedGrouped(limit, filters);
+  }
+
+  @Get('top-rank')
+  async getTopByRank(@Query() filters: RankingFiltersDto): Promise<GroupedRankingResponseDto> {
+    const limit = filters.limit ? Number(filters.limit) : 10;
+    return this.rankingsService.getTopPlayersByRankGrouped(limit, filters);
   }
 
   @Get('best-team-combinations')
-  async getBestTeamCombinations(
-    @Query('limit') limit?: string,
-  ): Promise<TeamCombinationResponseDto[]> {
+  async getBestTeamCombinations(@Query('limit') limit?: string): Promise<TeamCombinationResponseDto[]> {
     const limitNumber = limit ? parseInt(limit, 10) : 5;
     return this.rankingsService.getBestTeamCombinations(limitNumber);
+  }
+
+  @Post('agregate-rankings')
+  async agregateRankings(): Promise<void> {
+    return this.rankingsService.agregateRankings();
   }
 }

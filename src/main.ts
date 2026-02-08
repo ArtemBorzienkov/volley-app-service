@@ -1,5 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
+import { RankingsService } from './rankings/rankings.service';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -20,10 +21,10 @@ async function bootstrap() {
       if (!origin) {
         return callback(null, true);
       }
-      
+
       // Normalize origin (remove trailing slash)
       const normalizedOrigin = origin.replace(/\/$/, '');
-      
+
       // Check if origin is in allowed list (exact match or normalized match)
       if (allowedOrigins.includes(origin) || allowedOrigins.includes(normalizedOrigin)) {
         callback(null, true);
