@@ -11,5 +11,6 @@ export class FullPlayerResponseDto extends PlayerResponseDto {
   medals: MedalCounts;
   totalGames: number;
   winRate: number;
+  rank: number;
   recentGames: string[]; // Array of 'win' or 'lose' strings (max 5, most recent first)
 }

@@ -60,10 +60,13 @@ export class PlayersService {
   }
 
   async findAllFull(): Promise<FullPlayerResponseDto[]> {
-    // Get all active players
+    // Get all active players with playerStats
     const players = await this.prisma.player.findMany({
       where: {
         active: true,
+      },
+      include: {
+        playerStats: true,
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -157,6 +160,7 @@ export class PlayersService {
           },
           totalGames: stats.totalGames,
           winRate: Math.round(stats.winRate * 100) / 100, // Round to 2 decimal places
+          rank: player.playerStats?.rank ?? 1000,
           recentGames: recentGamesResults,
         } as FullPlayerResponseDto;
       }),
