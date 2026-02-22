@@ -1,15 +1,4 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Body,
-  Patch,
-  Param,
-  Delete,
-  Query,
-  HttpCode,
-  HttpStatus,
-} from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, HttpCode, HttpStatus } from '@nestjs/common';
 import { EventsService } from './events.service';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
@@ -28,35 +17,24 @@ export class EventsController {
 
   @Post('with-games')
   @HttpCode(HttpStatus.CREATED)
-  async createWithGames(
-    @Body() createEventWithGamesDto: CreateEventWithGamesDto,
-  ): Promise<EventResponseDto> {
+  async createWithGames(@Body() createEventWithGamesDto: CreateEventWithGamesDto): Promise<EventResponseDto> {
     return this.eventsService.createWithGames(createEventWithGamesDto);
   }
 
   @Get()
-  async findAll(): Promise<EventResponseDto[]> {
-    return this.eventsService.findAll();
+  async findAll(
+    @Query('page') page?: string,
+  ): Promise<{ events: EventResponseDto[]; page: number; hasMore: boolean; totalEvents: number }> {
+    return this.eventsService.findAll(+page || 1);
   }
 
   @Get(':id')
-  async findOne(
-    @Param('id') id: string,
-    @Query('includeGames') includeGames?: string,
-    @Query('includeMembers') includeMembers?: string,
-  ): Promise<EventResponseDto> {
-    return this.eventsService.findOne(
-      id,
-      includeGames === 'true',
-      includeMembers === 'true',
-    );
+  async findOne(@Param('id') id: string): Promise<EventResponseDto> {
+    return this.eventsService.findOne(id);
   }
 
   @Patch(':id')
-  async update(
-    @Param('id') id: string,
-    @Body() updateEventDto: UpdateEventDto,
-  ): Promise<EventResponseDto> {
+  async update(@Param('id') id: string, @Body() updateEventDto: UpdateEventDto): Promise<EventResponseDto> {
     return this.eventsService.update(id, updateEventDto);
   }
 

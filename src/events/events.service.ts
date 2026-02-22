@@ -6,6 +6,8 @@ import { UpdateEventDto } from './dto/update-event.dto';
 import { EventResponseDto } from './dto/event-response.dto';
 import { CreateEventWithGamesDto } from './dto/create-event-with-games.dto';
 
+const EVENTS_PER_PAGE = 5;
+
 @Injectable()
 export class EventsService {
   constructor(private prisma: PrismaService, private rankingsService: RankingsService) {}
@@ -129,58 +131,69 @@ export class EventsService {
       return { event, games: createdGames };
     });
 
-    // Update player ranks for each game after transaction completes
     for (const game of result.games) {
-      // Fetch game with player stats for rank update
-      const gameWithPlayerStats = await this.prisma.game.findUnique({
-        where: { id: game.id },
-        include: {
-          team1Player1: {
-            include: {
-              playerStats: true,
+      await this.prisma.$transaction(async (tx) => {
+        // Fetch game with player stats for rank update
+        const gameWithPlayerStats = await tx.game.findUnique({
+          where: { id: game.id },
+          include: {
+            team1Player1: {
+              include: {
+                playerStats: true,
+              },
+            },
+            team1Player2: {
+              include: {
+                playerStats: true,
+              },
+            },
+            team2Player1: {
+              include: {
+                playerStats: true,
+              },
+            },
+            team2Player2: {
+              include: {
+                playerStats: true,
+              },
             },
           },
-          team1Player2: {
-            include: {
-              playerStats: true,
-            },
-          },
-          team2Player1: {
-            include: {
-              playerStats: true,
-            },
-          },
-          team2Player2: {
-            include: {
-              playerStats: true,
-            },
-          },
-        },
-      });
+        });
 
-      if (gameWithPlayerStats) {
-        await this.rankingsService.updatePlayersRankByGameResult(gameWithPlayerStats);
-      }
+        if (gameWithPlayerStats) {
+          await this.rankingsService.updatePlayersRankByGameResult(tx, gameWithPlayerStats);
+        }
+      });
     }
 
     // Return event with games included
-    return this.mapToResponseDto(result.event, true);
+    return this.mapToResponseDto(result.event);
   }
 
-  async findAll(): Promise<EventResponseDto[]> {
+  async findAll(
+    page: number,
+  ): Promise<{ events: EventResponseDto[]; page: number; hasMore: boolean; totalEvents: number }> {
     const events = await this.prisma.event.findMany({
       orderBy: { date: 'desc' },
+      skip: (page - 1) * EVENTS_PER_PAGE,
+      take: EVENTS_PER_PAGE,
     });
 
-    return events.map((event) => this.mapToResponseDto(event));
+    const totalEvents = await this.prisma.event.count();
+    const hasMore = totalEvents > page * EVENTS_PER_PAGE;
+
+    return { events: events.map((event) => this.mapToResponseDto(event)), page, hasMore, totalEvents };
   }
 
-  async findOne(id: string, includeGames = false, includeMembers = false): Promise<EventResponseDto> {
+  async findOne(id: string): Promise<EventResponseDto> {
     const event = await this.prisma.event.findUnique({
       where: { id },
       include: {
-        games: includeGames,
-        eventMembers: includeMembers,
+        games: {
+          include: {
+            gamePlayerRanks: true,
+          },
+        },
       },
     });
 
@@ -188,7 +201,7 @@ export class EventsService {
       throw new NotFoundException(`Event with ID ${id} not found`);
     }
 
-    return this.mapToResponseDto(event, includeGames, includeMembers);
+    return this.mapToResponseDto(event);
   }
 
   async update(id: string, updateEventDto: UpdateEventDto): Promise<EventResponseDto> {
@@ -249,7 +262,7 @@ export class EventsService {
     });
   }
 
-  private mapToResponseDto(event: any, includeGames = false, includeMembers = false): EventResponseDto {
+  private mapToResponseDto(event: any): EventResponseDto {
     const dto: EventResponseDto = {
       id: event.id,
       name: event.name,
@@ -259,10 +272,7 @@ export class EventsService {
       data: event.data as Record<string, string[]> | undefined,
       createdAt: event.createdAt,
       updatedAt: event.updatedAt,
-    };
-
-    if (includeGames && event.games) {
-      dto.games = event.games.map((game: any) => ({
+      games: (event.games || []).map((game: any) => ({
         id: game.id,
         eventId: game.eventId,
         team1Player1Id: game.team1Player1Id,
@@ -275,18 +285,15 @@ export class EventsService {
         location: game.location,
         createdAt: game.createdAt,
         updatedAt: game.updatedAt,
-      }));
-    }
-
-    if (includeMembers && event.eventMembers) {
-      dto.members = event.eventMembers.map((member: any) => ({
-        id: member.id,
-        userId: member.userId,
-        eventId: member.eventId,
-        createdAt: member.createdAt,
-      }));
-    }
-
+        gamePlayerRanks: (game.gamePlayerRanks || []).map((gamePlayerRank: any) => ({
+          id: gamePlayerRank.id,
+          gameId: gamePlayerRank.gameId,
+          playerId: gamePlayerRank.playerId,
+          rank: gamePlayerRank.rank,
+          rankChange: gamePlayerRank.rankChange,
+        })),
+      })),
+    };
     return dto;
   }
 

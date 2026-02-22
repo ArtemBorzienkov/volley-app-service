@@ -6,13 +6,7 @@ import { RankingResponseDto } from './dto/ranking-response.dto';
 import { GroupedRankingResponseDto } from './dto/grouped-ranking-response.dto';
 import { TeamCombinationResponseDto } from './dto/team-combination-response.dto';
 import { PlayerResponseDto } from '../players/dto/player-response.dto';
-
-type PlayerWithStats = {
-  id: string;
-  playerStats?: {
-    rank: number;
-  } | null;
-};
+import { getRanksChangesByGameResult, PlayerWithStats } from './utils';
 
 @Injectable()
 export class RankingsService {
@@ -797,217 +791,120 @@ export class RankingsService {
     }));
   }
 
-  async updatePlayersRankByGameResult(game: {
-    id: string;
-    team1Points: number;
-    team2Points: number;
-    team1Player1: PlayerWithStats;
-    team1Player2: PlayerWithStats;
-    team2Player1: PlayerWithStats;
-    team2Player2: PlayerWithStats;
+  // Update ranks in database with bounds checking (0-3000)
+  async updateRank({
+    tx,
+    playerId,
+    rankChange,
+    gameId,
+  }: {
+    tx: any;
+    playerId: string;
+    rankChange: number;
+    gameId: string;
   }): Promise<void> {
-    const { team1Player1, team1Player2, team2Player1, team2Player2, team1Points, team2Points } = game;
+    const currentStats = await tx.playerStats.findUnique({
+      where: { playerId },
+    });
 
-    // Extract player ranks (use default 1000 if playerStats is null)
-    const team1Player1Rank = team1Player1?.playerStats?.rank ?? 1000;
-    const team1Player2Rank = team1Player2?.playerStats?.rank ?? 1000;
-    const team2Player1Rank = team2Player1?.playerStats?.rank ?? 1000;
-    const team2Player2Rank = team2Player2?.playerStats?.rank ?? 1000;
+    const currentRank = currentStats?.rank ?? 1000;
+    const rank = Math.max(0, Math.min(3000, currentRank + rankChange));
 
-    // Calculate team sums
-    const team1Sum = team1Player1Rank + team1Player2Rank;
-    const team2Sum = team2Player1Rank + team2Player2Rank;
+    await tx.playerStats.upsert({
+      where: { playerId },
+      create: {
+        playerId,
+        rank,
+        totalGames: 0,
+        totalWins: 0,
+        totalLosses: 0,
+      },
+      update: {
+        rank,
+      },
+    });
 
-    // Handle tie games - no rank change
-    if (team1Points === team2Points) {
-      return;
-    }
+    await tx.gamePlayerRank.create({
+      data: {
+        gameId,
+        playerId,
+        rankChange,
+        rank,
+      },
+    });
+  }
 
-    // Determine winner
-    const team1Won = team1Points > team2Points;
-
-    // Calculate rank difference
-    const rankDifference = Math.abs(team1Sum - team2Sum);
-
-    // Calculate rank change
-    let rankChange: number;
-    const maxRankChange = 50;
-
-    if (rankDifference === 0) {
-      // Equal teams
-      rankChange = Math.round(maxRankChange / 2);
-    } else {
-      // Determine if team1 is favorite or underdog
-      const team1IsFavorite = team1Sum > team2Sum;
-      const favoriteWon = team1IsFavorite ? team1Won : !team1Won;
-      const isUnderdogWin = team1IsFavorite ? !team1Won : team1Won;
-
-      if (rankDifference > 500 && favoriteWon) {
-        // Favorite wins with large difference - no rank change
-        rankChange = 0;
-      } else if (rankDifference > 500 && isUnderdogWin) {
-        // Underdog wins with large difference - maximum rank change
-        rankChange = maxRankChange;
-      } else {
-        // Get multiplier based on rank difference
-        let multiplier: number;
-        if (rankDifference <= 100) {
-          multiplier = isUnderdogWin ? 1.1 : 0.9;
-        } else if (rankDifference > 100 && rankDifference <= 200) {
-          multiplier = isUnderdogWin ? 1.15 : 0.85;
-        } else if (rankDifference > 200 && rankDifference <= 300) {
-          multiplier = isUnderdogWin ? 1.2 : 0.8;
-        } else if (rankDifference > 300 && rankDifference <= 400) {
-          multiplier = isUnderdogWin ? 1.3 : 0.75;
-        } else {
-          // 400+
-          multiplier = isUnderdogWin ? 1.4 : 0.7;
-        }
-
-        // Calculate base change: (max_rank_change / 2) * multiplier = 25 * multiplier
-        const baseChange = (maxRankChange / 2) * multiplier;
-        rankChange = baseChange;
-        // Cap at max rank change
-        rankChange = Math.min(rankChange, maxRankChange);
-      }
-    }
-
-    // If no rank change, return early
-    if (rankChange === 0) {
-      console.log(
-        `[Rank Update] Game ${game.id}: Rank diff=${rankDifference}, ` +
-          `Team1 won=${team1Won}, Favorite won with large diff - No rank change`,
-      );
-      return;
-    }
-
-    // Distribute rank changes based on player's percentage contribution to team rank
-    // For winners: inverted distribution (lower-ranked players get more)
-    //   rankParcentagePlayer = playerRank * 100 / teamSumRank
-    //   rankChangeCoeficient = (100 - rankParcentagePlayer) / 100
-    // For losers: proportional distribution (higher-ranked players lose more)
-    //   rankParcentagePlayer = playerRank * 100 / teamSumRank
-    //   rankChangeCoeficient = rankParcentagePlayer / 100
-
-    // Team1 coefficients (winners if team1Won, losers if team2Won)
-    const team1Player1RankPercentage = (team1Player1Rank * 100) / team1Sum;
-    const team1Player2RankPercentage = (team1Player2Rank * 100) / team1Sum;
-    const team1Player1RankChangeCoeficient = team1Won
-      ? (100 - team1Player1RankPercentage) / 100 // Inverted for winners
-      : team1Player1RankPercentage / 100; // Proportional for losers
-    const team1Player2RankChangeCoeficient = team1Won
-      ? (100 - team1Player2RankPercentage) / 100 // Inverted for winners
-      : team1Player2RankPercentage / 100; // Proportional for losers
-
-    // Team2 coefficients (losers if team1Won, winners if team2Won)
-    const team2Player1RankPercentage = (team2Player1Rank * 100) / team2Sum;
-    const team2Player2RankPercentage = (team2Player2Rank * 100) / team2Sum;
-    const team2Player1RankChangeCoeficient = team1Won
-      ? team2Player1RankPercentage / 100 // Proportional for losers
-      : (100 - team2Player1RankPercentage) / 100; // Inverted for winners
-    const team2Player2RankChangeCoeficient = team1Won
-      ? team2Player2RankPercentage / 100 // Proportional for losers
-      : (100 - team2Player2RankPercentage) / 100; // Inverted for winners
-
-    const team1Player1Change = team1Won
-      ? rankChange * team1Player1RankChangeCoeficient
-      : -rankChange * team1Player1RankChangeCoeficient;
-    const team1Player2Change = team1Won
-      ? rankChange * team1Player2RankChangeCoeficient
-      : -rankChange * team1Player2RankChangeCoeficient;
-    const team2Player1Change = team1Won
-      ? -rankChange * team2Player1RankChangeCoeficient
-      : rankChange * team2Player1RankChangeCoeficient;
-    const team2Player2Change = team1Won
-      ? -rankChange * team2Player2RankChangeCoeficient
-      : rankChange * team2Player2RankChangeCoeficient;
-
-    // Calculate total rank change per team
-    const team1TotalChange = team1Player1Change + team1Player2Change;
-    const team2TotalChange = team2Player1Change + team2Player2Change;
+  async updatePlayersRankByGameResult(
+    tx: any,
+    game: {
+      id: string;
+      team1Points: number;
+      team2Points: number;
+      team1Player1: PlayerWithStats;
+      team1Player2: PlayerWithStats;
+      team2Player1: PlayerWithStats;
+      team2Player2: PlayerWithStats;
+    },
+  ): Promise<void> {
+    const { team1Player1, team1Player2, team2Player1, team2Player2 } = game;
+    const { team1Player1Change, team1Player2Change, team2Player1Change, team2Player2Change } =
+      getRanksChangesByGameResult(game);
 
     // Log rank changes
     console.log(
       `[Rank Update] Game ${game.id}: ` +
-        `Rank diff=${rankDifference}, ` +
-        `Team1 won=${team1Won}, ` +
-        `Total rank change=${rankChange.toFixed(2)}, ` +
-        `Team1 change=${team1TotalChange.toFixed(2)}, ` +
-        `Team2 change=${team2TotalChange.toFixed(2)}`,
+        `Team1Player1Change=${team1Player1Change}, Team2Player1Change=${team2Player1Change}`,
     );
 
-    // Update ranks in database with bounds checking (0-3000)
-    const updateRank = async (playerId: string, rankChange: number) => {
-      const currentStats = await this.prisma.playerStats.findUnique({
-        where: { playerId },
-      });
-
-      const currentRank = currentStats?.rank ?? 1000;
-      const newRank = Math.max(0, Math.min(3000, currentRank + rankChange));
-
-      await this.prisma.playerStats.upsert({
-        where: { playerId },
-        create: {
-          playerId,
-          rank: Math.round(newRank),
-          totalGames: 0,
-          totalWins: 0,
-          totalLosses: 0,
-        },
-        update: {
-          rank: Math.round(newRank),
-        },
-      });
-    };
-
     await Promise.all([
-      updateRank(team1Player1.id, team1Player1Change),
-      updateRank(team1Player2.id, team1Player2Change),
-      updateRank(team2Player1.id, team2Player1Change),
-      updateRank(team2Player2.id, team2Player2Change),
+      this.updateRank({ tx, playerId: team1Player1.id, rankChange: Math.round(team1Player1Change), gameId: game.id }),
+      this.updateRank({ tx, playerId: team1Player2.id, rankChange: Math.round(team1Player2Change), gameId: game.id }),
+      this.updateRank({ tx, playerId: team2Player1.id, rankChange: Math.round(team2Player1Change), gameId: game.id }),
+      this.updateRank({ tx, playerId: team2Player2.id, rankChange: Math.round(team2Player2Change), gameId: game.id }),
     ]);
   }
 
   async agregateRankings(): Promise<void> {
-    this.prisma.playerStats.updateMany({
-      where: {
-        rank: {
-          not: 1000,
-        },
-      },
+    await this.prisma.playerStats.updateMany({
       data: {
         rank: 1000,
       },
     });
 
-    const allGamesWithPlayerStats = await this.prisma.game.findMany({
-      include: {
-        team1Player1: {
-          include: {
-            playerStats: true,
-          },
-        },
-        team1Player2: {
-          include: {
-            playerStats: true,
-          },
-        },
-        team2Player1: {
-          include: {
-            playerStats: true,
-          },
-        },
-        team2Player2: {
-          include: {
-            playerStats: true,
-          },
-        },
-      },
-    });
+    await this.prisma.gamePlayerRank.deleteMany();
+
+    const allGamesWithPlayerStats = await this.prisma.game.findMany();
 
     // Process each game
     for (const game of allGamesWithPlayerStats) {
-      await this.updatePlayersRankByGameResult(game);
+      await this.prisma.$transaction(async (tx) => {
+        const updatedGame = await tx.game.findUniqueOrThrow({
+          where: { id: game.id },
+          include: {
+            team1Player1: {
+              include: {
+                playerStats: true,
+              },
+            },
+            team1Player2: {
+              include: {
+                playerStats: true,
+              },
+            },
+            team2Player1: {
+              include: {
+                playerStats: true,
+              },
+            },
+            team2Player2: {
+              include: {
+                playerStats: true,
+              },
+            },
+          },
+        });
+        await this.updatePlayersRankByGameResult(tx, updatedGame);
+      });
     }
   }
 }

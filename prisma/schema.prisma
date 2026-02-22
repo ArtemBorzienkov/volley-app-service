@@ -31,6 +31,8 @@ model Player {
   createdEvents Event[]
   // Relations - player statistics
   playerStats PlayerStats?
+  // Relations - game player ranks
+  gamePlayerRanks GamePlayerRank[]
 
   @@index([tgId])
   @@map("players")
@@ -90,6 +92,7 @@ model Game {
   team1Player2 Player @relation("Team1Player2", fields: [team1Player2Id], references: [id])
   team2Player1 Player @relation("Team2Player1", fields: [team2Player1Id], references: [id])
   team2Player2 Player @relation("Team2Player2", fields: [team2Player2Id], references: [id])
+  gamePlayerRanks GamePlayerRank[]
 
   @@index([eventId])
   @@index([date])
@@ -113,4 +116,19 @@ model EventMember {
   @@index([eventId])
   @@index([userId])
   @@map("event_members")
+}
+
+model GamePlayerRank {
+  id          String @id @default(uuid())
+  gameId      String @map("game_id")
+  playerId    String @map("player_id")
+  rank        Int
+  rankChange  Int    @map("rank_change")
+
+  game        Game   @relation(fields: [gameId], references: [id])
+  player      Player @relation(fields: [playerId], references: [id])
+
+  @@index([gameId])
+  @@index([playerId])
+  @@map("game_player_rank")
 }
