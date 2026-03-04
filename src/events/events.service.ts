@@ -5,6 +5,7 @@ import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
 import { EventResponseDto } from './dto/event-response.dto';
 import { CreateEventWithGamesDto } from './dto/create-event-with-games.dto';
+import { Prisma } from '@prisma/client';
 
 const EVENTS_PER_PAGE = 5;
 
@@ -56,11 +57,6 @@ export class EventsService {
       );
     }
 
-    // Validate places if provided
-    if (createEventWithGamesDto.places) {
-      await this.validatePlaces(createEventWithGamesDto.places);
-    }
-
     const eventDate = new Date(createEventWithGamesDto.date);
 
     // Create event and all games in a transaction
@@ -92,6 +88,8 @@ export class EventsService {
       // Store places as JSON in data field
       if (createEventWithGamesDto.places && Object.keys(createEventWithGamesDto.places).length > 0) {
         eventCreateData.data = createEventWithGamesDto.places;
+      } else {
+        eventCreateData.data = Prisma.JsonNull;
       }
 
       const event = await tx.event.create({
@@ -172,17 +170,38 @@ export class EventsService {
 
   async findAll(
     page: number,
+    type: 'all' | 'tournament' | 'training' = 'all',
   ): Promise<{ events: EventResponseDto[]; page: number; hasMore: boolean; totalEvents: number }> {
-    const events = await this.prisma.event.findMany({
-      orderBy: { date: 'desc' },
-      skip: (page - 1) * EVENTS_PER_PAGE,
-      take: EVENTS_PER_PAGE,
-    });
+    const where: Prisma.EventWhereInput | undefined =
+      type === 'all'
+        ? undefined
+        : type === 'tournament'
+        ? { NOT: { data: { equals: Prisma.JsonNull } } }
+        : { data: { equals: Prisma.JsonNull } };
 
-    const totalEvents = await this.prisma.event.count();
-    const hasMore = totalEvents > page * EVENTS_PER_PAGE;
+    const [events, totalEvents] = await this.prisma.$transaction([
+      this.prisma.event.findMany({
+        where,
+        orderBy: { date: 'desc' },
+        skip: (page - 1) * EVENTS_PER_PAGE,
+        take: EVENTS_PER_PAGE,
+        include: {
+          games: {
+            include: {
+              gamePlayerRanks: true,
+            },
+          },
+        },
+      }),
+      this.prisma.event.count({ where }),
+    ]);
 
-    return { events: events.map((event) => this.mapToResponseDto(event)), page, hasMore, totalEvents };
+    return {
+      events: events.map((event) => this.mapToResponseDto(event)),
+      page,
+      hasMore: totalEvents > page * EVENTS_PER_PAGE,
+      totalEvents,
+    };
   }
 
   async findOne(id: string): Promise<EventResponseDto> {
@@ -357,32 +376,5 @@ export class EventsService {
         totalLosses: won ? undefined : { increment: 1 },
       },
     });
-  }
-
-  private async validatePlaces(places: Record<string, string[]>): Promise<void> {
-    // Extract all player IDs from places (flatten arrays)
-    const playerIds = Object.values(places)
-      .flat()
-      .filter((id) => id && id.trim() !== '');
-
-    if (playerIds.length === 0) {
-      return; // No places to validate
-    }
-
-    // Verify all player IDs exist
-    const uniquePlayerIds = [...new Set(playerIds)];
-    const players = await this.prisma.player.findMany({
-      where: {
-        id: {
-          in: uniquePlayerIds,
-        },
-      },
-    });
-
-    if (players.length !== uniquePlayerIds.length) {
-      const foundIds = players.map((p) => p.id);
-      const missingIds = uniquePlayerIds.filter((id) => !foundIds.includes(id));
-      throw new NotFoundException(`Players not found for places: ${missingIds.join(', ')}`);
-    }
   }
 }

@@ -24,8 +24,9 @@ export class EventsController {
   @Get()
   async findAll(
     @Query('page') page?: string,
+    @Query('type') type?: 'all' | 'tournament' | 'training',
   ): Promise<{ events: EventResponseDto[]; page: number; hasMore: boolean; totalEvents: number }> {
-    return this.eventsService.findAll(+page || 1);
+    return this.eventsService.findAll(+page || 1, type);
   }
 
   @Get(':id')
