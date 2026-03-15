@@ -97,6 +97,7 @@ export class RankingsService {
       where: {
         player: {
           active: true,
+          name: { not: 'Incognito' },
         },
       },
       include: {
@@ -581,8 +582,10 @@ export class RankingsService {
     const limitNumber = typeof limit === 'string' ? parseInt(limit, 10) : limit;
     const playerStats = await this.prisma.playerStats.findMany({
       where: {
+        totalGames: { gt: 10 },
         player: {
           active: true,
+          name: { not: 'Incognito' },
         },
       },
       include: {
