@@ -871,6 +871,9 @@ export class RankingsService {
     await this.prisma.playerStats.updateMany({
       data: {
         rank: 1000,
+        totalGames: 0,
+        totalLosses: 0,
+        totalWins: 0,
       },
     });
 
