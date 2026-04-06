@@ -909,6 +909,69 @@ export class RankingsService {
             },
           },
         });
+
+        const team1Won = updatedGame.team1Points > updatedGame.team2Points;
+        // Update player statistics
+        await tx.playerStats.upsert({
+          where: { playerId: updatedGame.team1Player1Id },
+          create: {
+            playerId: updatedGame.team1Player1Id,
+            totalGames: 1,
+            totalWins: team1Won ? 1 : 0,
+            totalLosses: team1Won ? 0 : 1,
+          },
+          update: {
+            totalGames: { increment: 1 },
+            totalWins: team1Won ? { increment: 1 } : undefined,
+            totalLosses: team1Won ? undefined : { increment: 1 },
+          },
+        });
+
+        await tx.playerStats.upsert({
+          where: { playerId: updatedGame.team1Player2Id },
+          create: {
+            playerId: updatedGame.team1Player2Id,
+            totalGames: 1,
+            totalWins: team1Won ? 1 : 0,
+            totalLosses: team1Won ? 0 : 1,
+          },
+          update: {
+            totalGames: { increment: 1 },
+            totalWins: team1Won ? { increment: 1 } : undefined,
+            totalLosses: team1Won ? undefined : { increment: 1 },
+          },
+        });
+
+        await tx.playerStats.upsert({
+          where: { playerId: updatedGame.team2Player1Id },
+          create: {
+            playerId: updatedGame.team2Player1Id,
+            totalGames: 1,
+            totalWins: !team1Won ? 1 : 0,
+            totalLosses: !team1Won ? 0 : 1,
+          },
+          update: {
+            totalGames: { increment: 1 },
+            totalWins: !team1Won ? { increment: 1 } : undefined,
+            totalLosses: !team1Won ? undefined : { increment: 1 },
+          },
+        });
+
+        await tx.playerStats.upsert({
+          where: { playerId: updatedGame.team2Player2Id },
+          create: {
+            playerId: updatedGame.team2Player2Id,
+            totalGames: 1,
+            totalWins: !team1Won ? 1 : 0,
+            totalLosses: !team1Won ? 0 : 1,
+          },
+          update: {
+            totalGames: { increment: 1 },
+            totalWins: !team1Won ? { increment: 1 } : undefined,
+            totalLosses: !team1Won ? undefined : { increment: 1 },
+          },
+        });
+
         await this.updatePlayersRankByGameResult(tx, updatedGame);
       });
     }
