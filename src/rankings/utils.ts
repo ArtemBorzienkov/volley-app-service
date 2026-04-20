@@ -2,6 +2,7 @@ export type PlayerWithStats = {
   id: string;
   playerStats?: {
     rank: number;
+    totalGames: number;
   } | null;
 };
 
@@ -9,15 +10,20 @@ const MAX_RANK_DIFFERENCE = 1000;
 const MAX_RANK_CHANGE = 30;
 const MIN_RANK_CHANGE = 3;
 const AVG_RANK_CHANGE = 15;
+const RANK_CHANGE_MULTIPLIER = 2;
+
+const getRankChangeByPlayer = (rankChange: number, gamesNumber: number) =>
+  gamesNumber >= 10 ? rankChange : rankChange * RANK_CHANGE_MULTIPLIER;
+
+const getMaxRankChange = (isTeam1Favorite: boolean, isTeam1Won: boolean) => {
+  if (isTeam1Favorite) {
+    return isTeam1Won ? MIN_RANK_CHANGE : MAX_RANK_CHANGE;
+  } else {
+    return isTeam1Won ? MAX_RANK_CHANGE : MIN_RANK_CHANGE;
+  }
+};
 
 export const getRankChangeByRankDifference = (rankDifference) => {
-  if (rankDifference > MAX_RANK_DIFFERENCE) {
-    return {
-      biggerChange: MIN_RANK_CHANGE,
-      lowerChange: MAX_RANK_CHANGE,
-    };
-  }
-
   if (rankDifference <= 100) {
     return {
       biggerChange: AVG_RANK_CHANGE,
@@ -122,20 +128,65 @@ export const getRanksChangesByGameResult = (game: {
   // Calculate rank difference
   const rankDifference = Math.abs(team1Sum - team2Sum);
 
+  if (rankDifference > MAX_RANK_DIFFERENCE) {
+    return {
+      team1Player1Change: getRankChangeByPlayer(
+        getMaxRankChange(isTeam1Favorite, isTeam1Won),
+        team1Player1.playerStats?.totalGames ?? 0,
+      ),
+      team1Player2Change: getRankChangeByPlayer(
+        getMaxRankChange(isTeam1Favorite, isTeam1Won),
+        team1Player2.playerStats?.totalGames ?? 0,
+      ),
+      team2Player1Change: getRankChangeByPlayer(
+        getMaxRankChange(isTeam1Favorite, isTeam1Won),
+        team2Player1.playerStats?.totalGames ?? 0,
+      ),
+      team2Player2Change: getRankChangeByPlayer(
+        getMaxRankChange(isTeam1Favorite, isTeam1Won),
+        team2Player2.playerStats?.totalGames ?? 0,
+      ),
+    };
+  }
+
   const { biggerChange, lowerChange } = getRankChangeByRankDifference(rankDifference);
   if (isTeam1Favorite) {
     return {
-      team1Player1Change: isTeam1Won ? lowerChange : -biggerChange,
-      team1Player2Change: isTeam1Won ? lowerChange : -biggerChange,
-      team2Player1Change: isTeam1Won ? -lowerChange : biggerChange,
-      team2Player2Change: isTeam1Won ? -lowerChange : biggerChange,
+      team1Player1Change: getRankChangeByPlayer(
+        isTeam1Won ? lowerChange : -biggerChange,
+        team1Player1.playerStats?.totalGames ?? 0,
+      ),
+      team1Player2Change: getRankChangeByPlayer(
+        isTeam1Won ? lowerChange : -biggerChange,
+        team1Player2.playerStats?.totalGames ?? 0,
+      ),
+      team2Player1Change: getRankChangeByPlayer(
+        isTeam1Won ? -lowerChange : biggerChange,
+        team2Player1.playerStats?.totalGames ?? 0,
+      ),
+      team2Player2Change: getRankChangeByPlayer(
+        isTeam1Won ? -lowerChange : biggerChange,
+        team2Player2.playerStats?.totalGames ?? 0,
+      ),
     };
   } else {
     return {
-      team1Player1Change: isTeam1Won ? biggerChange : -lowerChange,
-      team1Player2Change: isTeam1Won ? biggerChange : -lowerChange,
-      team2Player1Change: isTeam1Won ? -biggerChange : lowerChange,
-      team2Player2Change: isTeam1Won ? -biggerChange : lowerChange,
+      team1Player1Change: getRankChangeByPlayer(
+        isTeam1Won ? biggerChange : -lowerChange,
+        team1Player1.playerStats?.totalGames ?? 0,
+      ),
+      team1Player2Change: getRankChangeByPlayer(
+        isTeam1Won ? biggerChange : -lowerChange,
+        team1Player2.playerStats?.totalGames ?? 0,
+      ),
+      team2Player1Change: getRankChangeByPlayer(
+        isTeam1Won ? -biggerChange : lowerChange,
+        team2Player1.playerStats?.totalGames ?? 0,
+      ),
+      team2Player2Change: getRankChangeByPlayer(
+        isTeam1Won ? -biggerChange : lowerChange,
+        team2Player2.playerStats?.totalGames ?? 0,
+      ),
     };
   }
 };
