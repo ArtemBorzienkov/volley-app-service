@@ -15,12 +15,14 @@ const RANK_CHANGE_MULTIPLIER = 2;
 const getRankChangeByPlayer = (rankChange: number, gamesNumber: number) =>
   gamesNumber >= 10 ? rankChange : rankChange * RANK_CHANGE_MULTIPLIER;
 
-const getMaxRankChange = (isTeam1Favorite: boolean, isTeam1Won: boolean) => {
+const getMaxRankChange = (isTeam1Favorite: boolean, isTeam1Won: boolean, isFromTeam1: boolean) => {
+  let rankChange;
   if (isTeam1Favorite) {
-    return isTeam1Won ? MIN_RANK_CHANGE : -MAX_RANK_CHANGE;
+    rankChange = isTeam1Won ? MIN_RANK_CHANGE : MAX_RANK_CHANGE;
   } else {
-    return isTeam1Won ? -MAX_RANK_CHANGE : MIN_RANK_CHANGE;
+    rankChange = isTeam1Won ? MAX_RANK_CHANGE : MIN_RANK_CHANGE;
   }
+  return isFromTeam1 ? rankChange : -rankChange;
 };
 
 export const getRankChangeByRankDifference = (rankDifference) => {
@@ -131,19 +133,19 @@ export const getRanksChangesByGameResult = (game: {
   if (rankDifference > MAX_RANK_DIFFERENCE) {
     return {
       team1Player1Change: getRankChangeByPlayer(
-        getMaxRankChange(isTeam1Favorite, isTeam1Won),
+        getMaxRankChange(isTeam1Favorite, isTeam1Won, true),
         team1Player1.playerStats?.totalGames ?? 0,
       ),
       team1Player2Change: getRankChangeByPlayer(
-        getMaxRankChange(isTeam1Favorite, isTeam1Won),
+        getMaxRankChange(isTeam1Favorite, isTeam1Won, true),
         team1Player2.playerStats?.totalGames ?? 0,
       ),
       team2Player1Change: getRankChangeByPlayer(
-        getMaxRankChange(isTeam1Favorite, isTeam1Won),
+        getMaxRankChange(isTeam1Favorite, isTeam1Won, false),
         team2Player1.playerStats?.totalGames ?? 0,
       ),
       team2Player2Change: getRankChangeByPlayer(
-        getMaxRankChange(isTeam1Favorite, isTeam1Won),
+        getMaxRankChange(isTeam1Favorite, isTeam1Won, false),
         team2Player2.playerStats?.totalGames ?? 0,
       ),
     };
