@@ -17,9 +17,9 @@ const getRankChangeByPlayer = (rankChange: number, gamesNumber: number) =>
 
 const getMaxRankChange = (isTeam1Favorite: boolean, isTeam1Won: boolean) => {
   if (isTeam1Favorite) {
-    return isTeam1Won ? MIN_RANK_CHANGE : MAX_RANK_CHANGE;
+    return isTeam1Won ? MIN_RANK_CHANGE : -MAX_RANK_CHANGE;
   } else {
-    return isTeam1Won ? MAX_RANK_CHANGE : MIN_RANK_CHANGE;
+    return isTeam1Won ? -MAX_RANK_CHANGE : MIN_RANK_CHANGE;
   }
 };
 
