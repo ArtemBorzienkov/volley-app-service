@@ -15,6 +15,7 @@ import { CreateGameDto } from './dto/create-game.dto';
 import { UpdateGameDto } from './dto/update-game.dto';
 import { GameResponseDto } from './dto/game-response.dto';
 import { GamesQueryDto } from './dto/games-query.dto';
+import { PlayerGamesResponseDto } from './dto/player-game-row.dto';
 
 @Controller('games')
 export class GamesController {
@@ -30,6 +31,17 @@ export class GamesController {
   async findAll(@Query() query: GamesQueryDto): Promise<{ games: GameResponseDto[]; allGamesCount: number }> {
     const limit = query.limit || 200;
     return this.gamesService.findAllWithCount(limit);
+  }
+
+  @Get('player/:playerId')
+  async getPlayerGames(
+    @Param('playerId') playerId: string,
+    @Query('skip') skip?: string,
+    @Query('take') take?: string,
+  ): Promise<PlayerGamesResponseDto> {
+    const skipNumber = skip ? parseInt(skip, 10) : 0;
+    const takeNumber = take ? parseInt(take, 10) : 100;
+    return this.gamesService.getPlayerGames(playerId, skipNumber, takeNumber);
   }
 
   @Get(':id')

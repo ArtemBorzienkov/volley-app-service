@@ -3,10 +3,94 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateGameDto } from './dto/create-game.dto';
 import { UpdateGameDto } from './dto/update-game.dto';
 import { GameResponseDto } from './dto/game-response.dto';
+import {
+  PlayerGameRowDto,
+  PlayerGamesResponseDto,
+} from './dto/player-game-row.dto';
 
 @Injectable()
 export class GamesService {
   constructor(private prisma: PrismaService) {}
+
+  async getPlayerGames(
+    playerId: string,
+    skip = 0,
+    take = 100,
+  ): Promise<PlayerGamesResponseDto> {
+    const where = {
+      OR: [
+        { team1Player1Id: playerId },
+        { team1Player2Id: playerId },
+        { team2Player1Id: playerId },
+        { team2Player2Id: playerId },
+      ],
+    };
+
+    const [games, total] = await Promise.all([
+      this.prisma.game.findMany({
+        where,
+        // Reverse of the aggregation order (date/createdAt/id asc) so the
+        // newest game is first and the rank chain reads correctly bottom-up.
+        orderBy: [{ date: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
+        skip,
+        take,
+        include: {
+          team1Player1: { select: { id: true, name: true } },
+          team1Player2: { select: { id: true, name: true } },
+          team2Player1: { select: { id: true, name: true } },
+          team2Player2: { select: { id: true, name: true } },
+          gamePlayerRanks: {
+            where: { playerId },
+            select: { rankChange: true, rank: true },
+          },
+        },
+      }),
+      this.prisma.game.count({ where }),
+    ]);
+
+    return {
+      games: games.map((game) => this.mapToPlayerGameRow(game, playerId)),
+      total,
+    };
+  }
+
+  private mapToPlayerGameRow(game: any, playerId: string): PlayerGameRowDto {
+    const team1 = {
+      player1: game.team1Player1,
+      player2: game.team1Player2,
+      points: game.team1Points,
+    };
+    const team2 = {
+      player1: game.team2Player1,
+      player2: game.team2Player2,
+      points: game.team2Points,
+    };
+
+    // Reorient so the page player is always team1.player1.
+    const onTeam1 =
+      game.team1Player1Id === playerId || game.team1Player2Id === playerId;
+    const playerTeam = onTeam1 ? team1 : team2;
+    const opponentTeam = onTeam1 ? team2 : team1;
+
+    const playerIsFirst = playerTeam.player1.id === playerId;
+
+    return {
+      gameId: game.id,
+      date: game.date,
+      team1: {
+        player1: playerIsFirst ? playerTeam.player1 : playerTeam.player2,
+        player2: playerIsFirst ? playerTeam.player2 : playerTeam.player1,
+        points: playerTeam.points,
+      },
+      team2: {
+        player1: opponentTeam.player1,
+        player2: opponentTeam.player2,
+        points: opponentTeam.points,
+      },
+      rankChange: game.gamePlayerRanks[0]?.rankChange ?? 0,
+      newRating: game.gamePlayerRanks[0]?.rank ?? 0,
+    };
+  }
 
   async create(createGameDto: CreateGameDto): Promise<GameResponseDto> {
     // Validate team composition

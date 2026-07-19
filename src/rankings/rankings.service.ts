@@ -5,6 +5,7 @@ import { RankingFiltersDto } from '../common/dto/ranking-filters.dto';
 import { RankingResponseDto } from './dto/ranking-response.dto';
 import { GroupedRankingResponseDto } from './dto/grouped-ranking-response.dto';
 import { TeamCombinationResponseDto } from './dto/team-combination-response.dto';
+import { PlayerRankHistoryDto } from './dto/player-rank-history.dto';
 import { PlayerResponseDto } from '../players/dto/player-response.dto';
 import { getRanksChangesByGameResult, PlayerWithStats } from './utils';
 
@@ -879,7 +880,11 @@ export class RankingsService {
 
     await this.prisma.gamePlayerRank.deleteMany();
 
-    const allGamesWithPlayerStats = await this.prisma.game.findMany();
+    // Deterministic chronological order so the rank chain is reproducible.
+    // Same order must be mirrored by the read endpoints (games list / rank history).
+    const allGamesWithPlayerStats = await this.prisma.game.findMany({
+      orderBy: [{ date: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+    });
 
     // Process each game
     for (const game of allGamesWithPlayerStats) {
@@ -975,5 +980,24 @@ export class RankingsService {
         await this.updatePlayersRankByGameResult(tx, updatedGame);
       });
     }
+  }
+
+  async getPlayerRankHistory(playerId: string): Promise<PlayerRankHistoryDto[]> {
+    const records = await this.prisma.gamePlayerRank.findMany({
+      where: { playerId },
+      include: { game: { select: { date: true, createdAt: true, id: true } } },
+      orderBy: [
+        { game: { date: 'asc' } },
+        { game: { createdAt: 'asc' } },
+        { game: { id: 'asc' } },
+      ],
+    });
+
+    return records.map((record) => ({
+      gameId: record.gameId,
+      date: record.game.date,
+      rank: record.rank,
+      rankChange: record.rankChange,
+    }));
   }
 }

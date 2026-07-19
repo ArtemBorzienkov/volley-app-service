@@ -4,6 +4,7 @@ import { RankingFiltersDto } from '../common/dto/ranking-filters.dto';
 import { RankingResponseDto } from './dto/ranking-response.dto';
 import { GroupedRankingResponseDto } from './dto/grouped-ranking-response.dto';
 import { TeamCombinationResponseDto } from './dto/team-combination-response.dto';
+import { PlayerRankHistoryDto } from './dto/player-rank-history.dto';
 
 @Controller('rankings')
 export class RankingsController {
@@ -62,6 +63,13 @@ export class RankingsController {
   async getBestTeamCombinations(@Query('limit') limit?: string): Promise<TeamCombinationResponseDto[]> {
     const limitNumber = limit ? parseInt(limit, 10) : 5;
     return this.rankingsService.getBestTeamCombinations(limitNumber);
+  }
+
+  @Get('player-rank-history')
+  async getPlayerRankHistory(
+    @Query('playerId') playerId: string,
+  ): Promise<PlayerRankHistoryDto[]> {
+    return this.rankingsService.getPlayerRankHistory(playerId);
   }
 
   @Post('agregate-rankings')
