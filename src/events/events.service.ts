@@ -96,9 +96,16 @@ export class EventsService {
         data: eventCreateData,
       });
 
-      // Create all games and update player statistics
+      // Create all games and update player statistics.
+      // Games are inserted in UI order (first game first, last game last). Because bulk
+      // inserts share the same `date` and Postgres `now()` is constant within a transaction,
+      // we assign each game a strictly increasing `createdAt` (base + index ms) so the game
+      // order is deterministically preserved and reproduced by every `date/createdAt/id asc`
+      // ordering (rankings aggregation + read endpoints).
       const createdGames = [];
-      for (const gameDto of createEventWithGamesDto.games) {
+      const baseCreatedAt = new Date();
+      for (let index = 0; index < createEventWithGamesDto.games.length; index++) {
+        const gameDto = createEventWithGamesDto.games[index];
         // Determine winner by points (team with more points wins)
         const team1Won = gameDto.team1Points > gameDto.team2Points;
 
@@ -114,6 +121,7 @@ export class EventsService {
             team2Points: gameDto.team2Points,
             date: eventDate,
             location: createEventWithGamesDto.location,
+            createdAt: new Date(baseCreatedAt.getTime() + index),
           },
         });
 
