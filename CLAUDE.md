@@ -9,6 +9,7 @@ directory).
 **Read [`README.md`](README.md) first for domain detail.** It is thorough and current: full API
 reference, the rating algorithm's change tables, the data model, and deployment. This file covers
 only what the README does not — commands, orientation, conventions, and the traps.
+[`AGENTS.md`](AGENTS.md) covers working practice: how to design, test, and verify a change here.
 
 ## Commands
 
