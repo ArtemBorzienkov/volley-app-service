@@ -278,15 +278,36 @@ export class EventsService {
   async remove(id: string): Promise<void> {
     const event = await this.prisma.event.findUnique({
       where: { id },
+      select: { id: true, games: { select: { id: true } } },
     });
 
     if (!event) {
       throw new NotFoundException(`Event with ID ${id} not found`);
     }
 
-    await this.prisma.event.delete({
-      where: { id },
+    const gameIds = event.games.map((game) => game.id);
+
+    // Rank rows first: the FK is ON DELETE RESTRICT and would abort the games cascade.
+    await this.prisma.$transaction(async (tx) => {
+      await tx.gamePlayerRank.deleteMany({ where: { gameId: { in: gameIds } } });
+      await tx.event.delete({ where: { id } });
     });
+
+    // Nothing entered the rank chain.
+    if (!gameIds.length) return;
+
+    // rank is chained across games, so the whole chain is replayed. Outside the transaction
+    // above - it opens its own per-game transactions.
+    try {
+      await this.rankingsService.agregateRankings();
+    } catch (error) {
+      console.error(
+        `[Event Delete] Event ${id} was deleted but the ranking re-aggregation failed. ` +
+          'player_stats and game_player_rank are mid-reset - re-run POST /rankings/agregate-rankings.',
+        error,
+      );
+      throw error;
+    }
   }
 
   private mapToResponseDto(event: any): EventResponseDto {

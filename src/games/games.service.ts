@@ -3,20 +3,13 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateGameDto } from './dto/create-game.dto';
 import { UpdateGameDto } from './dto/update-game.dto';
 import { GameResponseDto } from './dto/game-response.dto';
-import {
-  PlayerGameRowDto,
-  PlayerGamesResponseDto,
-} from './dto/player-game-row.dto';
+import { PlayerGameRowDto, PlayerGamesResponseDto } from './dto/player-game-row.dto';
 
 @Injectable()
 export class GamesService {
   constructor(private prisma: PrismaService) {}
 
-  async getPlayerGames(
-    playerId: string,
-    skip = 0,
-    take = 100,
-  ): Promise<PlayerGamesResponseDto> {
+  async getPlayerGames(playerId: string, skip = 0, take = 100): Promise<PlayerGamesResponseDto> {
     const where = {
       OR: [
         { team1Player1Id: playerId },
@@ -67,8 +60,7 @@ export class GamesService {
     };
 
     // Reorient so the page player is always team1.player1.
-    const onTeam1 =
-      game.team1Player1Id === playerId || game.team1Player2Id === playerId;
+    const onTeam1 = game.team1Player1Id === playerId || game.team1Player2Id === playerId;
     const playerTeam = onTeam1 ? team1 : team2;
     const opponentTeam = onTeam1 ? team2 : team1;
 
@@ -143,7 +135,7 @@ export class GamesService {
     return this.mapToResponseDto(game);
   }
 
-  async findAll(limit: number = 5): Promise<GameResponseDto[]> {
+  async findAll(limit = 5): Promise<GameResponseDto[]> {
     const games = await this.prisma.game.findMany({
       orderBy: { date: 'desc' },
       take: limit,
@@ -152,7 +144,7 @@ export class GamesService {
     return games.map((game) => this.mapToResponseDto(game));
   }
 
-  async findAllWithCount(limit: number = 5): Promise<{ games: GameResponseDto[]; allGamesCount: number }> {
+  async findAllWithCount(limit = 5): Promise<{ games: GameResponseDto[]; allGamesCount: number }> {
     const [games, allGamesCount] = await Promise.all([
       this.prisma.game.findMany({
         orderBy: { date: 'desc' },

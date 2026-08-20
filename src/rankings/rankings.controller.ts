@@ -66,9 +66,7 @@ export class RankingsController {
   }
 
   @Get('player-rank-history')
-  async getPlayerRankHistory(
-    @Query('playerId') playerId: string,
-  ): Promise<PlayerRankHistoryDto[]> {
+  async getPlayerRankHistory(@Query('playerId') playerId: string): Promise<PlayerRankHistoryDto[]> {
     return this.rankingsService.getPlayerRankHistory(playerId);
   }
 

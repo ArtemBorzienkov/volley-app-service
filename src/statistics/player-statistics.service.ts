@@ -5,10 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 export class PlayerStatisticsService {
   constructor(private prisma: PrismaService) {}
 
-  async getPlayerStats(
-    playerId: string,
-    dateRange?: { start: Date; end: Date },
-  ) {
+  async getPlayerStats(playerId: string, dateRange?: { start: Date; end: Date }) {
     // Verify player exists
     const player = await this.prisma.player.findUnique({
       where: { id: playerId },
@@ -27,8 +24,7 @@ export class PlayerStatisticsService {
       dateFilter.lte = dateRange.end;
     }
 
-    const dateWhere =
-      Object.keys(dateFilter).length > 0 ? { date: dateFilter } : {};
+    const dateWhere = Object.keys(dateFilter).length > 0 ? { date: dateFilter } : {};
 
     // Get all games where player participated
     const gamesAsTeam1Player1 = await this.prisma.game.findMany({
@@ -60,30 +56,21 @@ export class PlayerStatisticsService {
     });
 
     // Combine all games (avoid duplicates by using Set with game IDs)
-    const allGames = [
-      ...gamesAsTeam1Player1,
-      ...gamesAsTeam1Player2,
-      ...gamesAsTeam2Player1,
-      ...gamesAsTeam2Player2,
-    ];
+    const allGames = [...gamesAsTeam1Player1, ...gamesAsTeam1Player2, ...gamesAsTeam2Player1, ...gamesAsTeam2Player2];
 
     // Remove duplicates
-    const uniqueGames = Array.from(
-      new Map(allGames.map((game) => [game.id, game])).values(),
-    );
+    const uniqueGames = Array.from(new Map(allGames.map((game) => [game.id, game])).values());
 
     // Calculate statistics
-    let totalGames = uniqueGames.length;
+    const totalGames = uniqueGames.length;
     let totalWins = 0;
     let totalLosses = 0;
     let pointsScored = 0;
     let pointsConceded = 0;
 
     for (const game of uniqueGames) {
-      const isTeam1 =
-        game.team1Player1Id === playerId || game.team1Player2Id === playerId;
-      const isTeam2 =
-        game.team2Player1Id === playerId || game.team2Player2Id === playerId;
+      const isTeam1 = game.team1Player1Id === playerId || game.team1Player2Id === playerId;
+      const isTeam2 = game.team2Player1Id === playerId || game.team2Player2Id === playerId;
 
       if (isTeam1) {
         pointsScored += game.team1Points;

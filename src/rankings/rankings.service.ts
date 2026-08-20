@@ -48,7 +48,7 @@ export class RankingsService {
     return where;
   }
 
-  private groupRankingsByGender(rankings: RankingResponseDto[], limit: number = 10): GroupedRankingResponseDto {
+  private groupRankingsByGender(rankings: RankingResponseDto[], limit = 10): GroupedRankingResponseDto {
     const grouped: GroupedRankingResponseDto = {
       ALL: [],
       W: [],
@@ -91,7 +91,7 @@ export class RankingsService {
     return grouped;
   }
 
-  async getTopPlayersByWins(limit: number = 10, filters?: RankingFiltersDto): Promise<RankingResponseDto[]> {
+  async getTopPlayersByWins(limit = 10, filters?: RankingFiltersDto): Promise<RankingResponseDto[]> {
     // Ensure limit is a number
     const limitNumber = typeof limit === 'string' ? parseInt(limit, 10) : limit;
     const playerStats = await this.prisma.playerStats.findMany({
@@ -118,7 +118,7 @@ export class RankingsService {
     }));
   }
 
-  async getTopPlayersByWinRate(limit: number = 10, filters?: RankingFiltersDto): Promise<RankingResponseDto[]> {
+  async getTopPlayersByWinRate(limit = 10, filters?: RankingFiltersDto): Promise<RankingResponseDto[]> {
     const dateRange = filters
       ? {
           start: filters.startDate ? new Date(filters.startDate) : undefined,
@@ -183,7 +183,7 @@ export class RankingsService {
     return rankings;
   }
 
-  async getTopPlayersBySetsWon(limit: number = 10, filters?: RankingFiltersDto): Promise<RankingResponseDto[]> {
+  async getTopPlayersBySetsWon(limit = 10, filters?: RankingFiltersDto): Promise<RankingResponseDto[]> {
     const dateRange = filters
       ? {
           start: filters.startDate ? new Date(filters.startDate) : undefined,
@@ -228,7 +228,7 @@ export class RankingsService {
     }));
   }
 
-  async getTopPlayersByTournamentsWon(limit: number = 10, filters?: RankingFiltersDto): Promise<RankingResponseDto[]> {
+  async getTopPlayersByTournamentsWon(limit = 10, filters?: RankingFiltersDto): Promise<RankingResponseDto[]> {
     // Get all events (filtered by date if specified)
     const eventWhere: any = {};
     if (filters?.startDate || filters?.endDate) {
@@ -317,7 +317,7 @@ export class RankingsService {
     }));
   }
 
-  async getTopPlayersByWonEvents(limit: number = 10, filters?: RankingFiltersDto): Promise<RankingResponseDto[]> {
+  async getTopPlayersByWonEvents(limit = 10, filters?: RankingFiltersDto): Promise<RankingResponseDto[]> {
     // Maps to store medal counts per player
     const goldMedalsMap = new Map<string, number>(); // userId: count
     const silverMedalsMap = new Map<string, number>(); // userId: count
@@ -429,7 +429,7 @@ export class RankingsService {
     return rankings;
   }
 
-  async getTopPlayersByGamesPlayed(limit: number = 10, filters?: RankingFiltersDto): Promise<RankingResponseDto[]> {
+  async getTopPlayersByGamesPlayed(limit = 10, filters?: RankingFiltersDto): Promise<RankingResponseDto[]> {
     // Ensure limit is a number
     const limitNumber = typeof limit === 'string' ? parseInt(limit, 10) : limit;
 
@@ -489,34 +489,25 @@ export class RankingsService {
     return rankings;
   }
 
-  async getTopPlayersByWonEventsGrouped(
-    limit: number = 10,
-    filters?: RankingFiltersDto,
-  ): Promise<GroupedRankingResponseDto> {
+  async getTopPlayersByWonEventsGrouped(limit = 10, filters?: RankingFiltersDto): Promise<GroupedRankingResponseDto> {
     // Get all rankings without limit first
     const allRankings = await this.getTopPlayersByWonEvents(1000, filters);
     return this.groupRankingsByGender(allRankings, limit);
   }
 
-  async getTopPlayersByWinRateGrouped(
-    limit: number = 10,
-    filters?: RankingFiltersDto,
-  ): Promise<GroupedRankingResponseDto> {
+  async getTopPlayersByWinRateGrouped(limit = 10, filters?: RankingFiltersDto): Promise<GroupedRankingResponseDto> {
     // Get all rankings without limit first
     const allRankings = await this.getTopPlayersByWinRate(1000, filters);
     return this.groupRankingsByGender(allRankings, limit);
   }
 
-  async getTopPlayersByGamesPlayedGrouped(
-    limit: number = 10,
-    filters?: RankingFiltersDto,
-  ): Promise<GroupedRankingResponseDto> {
+  async getTopPlayersByGamesPlayedGrouped(limit = 10, filters?: RankingFiltersDto): Promise<GroupedRankingResponseDto> {
     // Get all rankings without limit first
     const allRankings = await this.getTopPlayersByGamesPlayed(1000, filters);
     return this.groupRankingsByGender(allRankings, limit);
   }
 
-  async getTopPlayersByRank(limit: number = 10, filters?: RankingFiltersDto): Promise<RankingResponseDto[]> {
+  async getTopPlayersByRank(limit = 10, filters?: RankingFiltersDto): Promise<RankingResponseDto[]> {
     // Ensure limit is a number
     const limitNumber = typeof limit === 'string' ? parseInt(limit, 10) : limit;
 
@@ -569,16 +560,13 @@ export class RankingsService {
     return rankings;
   }
 
-  async getTopPlayersByRankGrouped(
-    limit: number = 10,
-    filters?: RankingFiltersDto,
-  ): Promise<GroupedRankingResponseDto> {
+  async getTopPlayersByRankGrouped(limit = 10, filters?: RankingFiltersDto): Promise<GroupedRankingResponseDto> {
     // Get all rankings without limit first
     const allRankings = await this.getTopPlayersByRank(1000, filters);
     return this.groupRankingsByGender(allRankings, limit);
   }
 
-  async getTopPlayersByLowestLosses(limit: number = 10, filters?: RankingFiltersDto): Promise<RankingResponseDto[]> {
+  async getTopPlayersByLowestLosses(limit = 10, filters?: RankingFiltersDto): Promise<RankingResponseDto[]> {
     // Ensure limit is a number
     const limitNumber = typeof limit === 'string' ? parseInt(limit, 10) : limit;
     const playerStats = await this.prisma.playerStats.findMany({
@@ -606,10 +594,7 @@ export class RankingsService {
     }));
   }
 
-  async getTopPlayersByPointsDifference(
-    limit: number = 10,
-    filters?: RankingFiltersDto,
-  ): Promise<RankingResponseDto[]> {
+  async getTopPlayersByPointsDifference(limit = 10, filters?: RankingFiltersDto): Promise<RankingResponseDto[]> {
     const dateRange = filters
       ? {
           start: filters.startDate ? new Date(filters.startDate) : undefined,
@@ -654,7 +639,7 @@ export class RankingsService {
     }));
   }
 
-  async getBestTeamCombinations(limit: number = 5): Promise<TeamCombinationResponseDto[]> {
+  async getBestTeamCombinations(limit = 5): Promise<TeamCombinationResponseDto[]> {
     // Get all games
     const games = await this.prisma.game.findMany({
       orderBy: { date: 'desc' },
@@ -986,11 +971,7 @@ export class RankingsService {
     const records = await this.prisma.gamePlayerRank.findMany({
       where: { playerId },
       include: { game: { select: { date: true, createdAt: true, id: true } } },
-      orderBy: [
-        { game: { date: 'asc' } },
-        { game: { createdAt: 'asc' } },
-        { game: { id: 'asc' } },
-      ],
+      orderBy: [{ game: { date: 'asc' } }, { game: { createdAt: 'asc' } }, { game: { id: 'asc' } }],
     });
 
     return records.map((record) => ({

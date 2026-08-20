@@ -1,12 +1,4 @@
-import {
-  IsString,
-  IsInt,
-  IsDateString,
-  IsOptional,
-  Min,
-  IsArray,
-  ArrayUnique,
-} from 'class-validator';
+import { IsString, IsInt, IsDateString, IsOptional, Min, IsArray, ArrayUnique } from 'class-validator';
 
 export class CreateGameDto {
   @IsString()

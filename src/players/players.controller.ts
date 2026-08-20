@@ -1,12 +1,4 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Body,
-  Param,
-  HttpCode,
-  HttpStatus,
-} from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, HttpCode, HttpStatus } from '@nestjs/common';
 import { PlayersService } from './players.service';
 import { CreatePlayerDto } from './dto/create-player.dto';
 import { PlayerResponseDto } from './dto/player-response.dto';
@@ -19,9 +11,7 @@ export class PlayersController {
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  async create(
-    @Body() createPlayerDto: CreatePlayerDto,
-  ): Promise<PlayerResponseDto> {
+  async create(@Body() createPlayerDto: CreatePlayerDto): Promise<PlayerResponseDto> {
     return this.playersService.create(createPlayerDto);
   }
 

@@ -1,13 +1,4 @@
-import {
-  IsString,
-  IsDateString,
-  IsOptional,
-  IsArray,
-  ValidateNested,
-  IsInt,
-  Min,
-  IsObject,
-} from 'class-validator';
+import { IsString, IsDateString, IsOptional, IsArray, ValidateNested, IsInt, Min, IsObject } from 'class-validator';
 import { Type } from 'class-transformer';
 
 class CreateGameDto {
