@@ -6,6 +6,7 @@ import { GamesModule } from './games/games.module';
 import { EventMembersModule } from './event-members/event-members.module';
 import { StatisticsModule } from './statistics/statistics.module';
 import { RankingsModule } from './rankings/rankings.module';
+import { OngoingModule } from './ongoing/ongoing.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { RankingsModule } from './rankings/rankings.module';
     EventMembersModule,
     StatisticsModule,
     RankingsModule,
+    OngoingModule,
   ],
   controllers: [],
   providers: [],

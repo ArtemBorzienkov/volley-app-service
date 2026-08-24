@@ -20,19 +20,22 @@ model Player {
   createdAt DateTime @default(now()) @map("created_at")
 
   // Relations - games where player is in team1
-  team1GamesAsPlayer1 Game[] @relation("Team1Player1")
-  team1GamesAsPlayer2 Game[] @relation("Team1Player2")
+  team1GamesAsPlayer1   Game[]           @relation("Team1Player1")
+  team1GamesAsPlayer2   Game[]           @relation("Team1Player2")
   // Relations - games where player is in team2
-  team2GamesAsPlayer1 Game[] @relation("Team2Player1")
-  team2GamesAsPlayer2 Game[] @relation("Team2Player2")
+  team2GamesAsPlayer1   Game[]           @relation("Team2Player1")
+  team2GamesAsPlayer2   Game[]           @relation("Team2Player2")
   // Relations - event memberships
-  eventMembers EventMember[]
+  eventMembers          EventMember[]
   // Relations - created events
-  createdEvents Event[]
+  createdEvents         Event[]
   // Relations - player statistics
-  playerStats PlayerStats?
+  playerStats           PlayerStats?
   // Relations - game player ranks
-  gamePlayerRanks GamePlayerRank[]
+  gamePlayerRanks       GamePlayerRank[]
+  // Relations - ongoing tournament teams
+  ongoingTeamsAsPlayer1 OngoingTeam[]    @relation("OngoingTeamPlayer1")
+  ongoingTeamsAsPlayer2 OngoingTeam[]    @relation("OngoingTeamPlayer2")
 
   @@index([tgId])
   @@map("players")
@@ -64,7 +67,7 @@ model Event {
 
   games        Game[]
   eventMembers EventMember[]
-  creator      Player? @relation(fields: [createdBy], references: [id])
+  creator      Player?       @relation(fields: [createdBy], references: [id])
 
   @@index([date])
   @@index([createdBy])
@@ -88,10 +91,10 @@ model Game {
   // Relations
   event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
-  team1Player1 Player @relation("Team1Player1", fields: [team1Player1Id], references: [id])
-  team1Player2 Player @relation("Team1Player2", fields: [team1Player2Id], references: [id])
-  team2Player1 Player @relation("Team2Player1", fields: [team2Player1Id], references: [id])
-  team2Player2 Player @relation("Team2Player2", fields: [team2Player2Id], references: [id])
+  team1Player1    Player           @relation("Team1Player1", fields: [team1Player1Id], references: [id])
+  team1Player2    Player           @relation("Team1Player2", fields: [team1Player2Id], references: [id])
+  team2Player1    Player           @relation("Team2Player1", fields: [team2Player1Id], references: [id])
+  team2Player2    Player           @relation("Team2Player2", fields: [team2Player2Id], references: [id])
   gamePlayerRanks GamePlayerRank[]
 
   @@index([eventId])
@@ -119,16 +122,93 @@ model EventMember {
 }
 
 model GamePlayerRank {
-  id          String @id @default(uuid())
-  gameId      String @map("game_id")
-  playerId    String @map("player_id")
-  rank        Int
-  rankChange  Int    @map("rank_change")
+  id         String @id @default(uuid())
+  gameId     String @map("game_id")
+  playerId   String @map("player_id")
+  rank       Int
+  rankChange Int    @map("rank_change")
 
-  game        Game   @relation(fields: [gameId], references: [id])
-  player      Player @relation(fields: [playerId], references: [id])
+  game   Game   @relation(fields: [gameId], references: [id])
+  player Player @relation(fields: [playerId], references: [id])
 
   @@index([gameId])
   @@index([playerId])
   @@map("game_player_rank")
+}
+
+model OngoingEvent {
+  id         String    @id @default(uuid())
+  name       String
+  date       DateTime
+  startTime  String?   @map("start_time")
+  location   String?
+  finishedAt DateTime? @map("finished_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  config OngoingEventConfig?
+  teams  OngoingTeam[]
+  games  OngoingGame[]
+
+  @@index([date])
+  @@map("ongoing_events")
+}
+
+model OngoingEventConfig {
+  id                 String @id @default(uuid())
+  eventId            String @unique @map("event_id")
+  gamesPerPair       Int    @default(1) @map("games_per_pair")
+  courts             Int    @default(1)
+  maxTeams           Int?   @map("max_teams")
+  scheme             String @default("roundRobin")
+  groupCount         Int    @default(1) @map("group_count")
+  qualifiersPerGroup Int?   @map("qualifiers_per_group")
+
+  event OngoingEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@map("ongoing_event_config")
+}
+
+model OngoingTeam {
+  id         String   @id @default(uuid())
+  eventId    String   @map("event_id")
+  player1Id  String   @map("player1_id")
+  player2Id  String   @map("player2_id")
+  groupIndex Int?     @map("group_index")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  event   OngoingEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  player1 Player       @relation("OngoingTeamPlayer1", fields: [player1Id], references: [id])
+  player2 Player       @relation("OngoingTeamPlayer2", fields: [player2Id], references: [id])
+
+  gamesAsTeam1 OngoingGame[] @relation("OngoingGameTeam1")
+  gamesAsTeam2 OngoingGame[] @relation("OngoingGameTeam2")
+
+  @@index([eventId])
+  @@map("ongoing_teams")
+}
+
+model OngoingGame {
+  id           String   @id @default(uuid())
+  eventId      String   @map("event_id")
+  team1Id      String?  @map("team1_id")
+  team2Id      String?  @map("team2_id")
+  team1Points  Int?     @map("team1_points")
+  team2Points  Int?     @map("team2_points")
+  round        Int
+  court        Int
+  order        Int
+  phase        String   @default("group")
+  bracketRound Int?     @map("bracket_round")
+  bracketSlot  Int?     @map("bracket_slot")
+  thirdPlace   Boolean  @default(false) @map("third_place")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  event OngoingEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  team1 OngoingTeam? @relation("OngoingGameTeam1", fields: [team1Id], references: [id], onDelete: Cascade)
+  team2 OngoingTeam? @relation("OngoingGameTeam2", fields: [team2Id], references: [id], onDelete: Cascade)
+
+  @@index([eventId])
+  @@map("ongoing_games")
 }
