@@ -46,6 +46,7 @@ export class OngoingEventResponseDto {
   finishedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+  createdByUserId: string | null;
   config: OngoingEventConfigResponseDto;
   teams: OngoingTeamResponseDto[];
   games: OngoingGameResponseDto[];
@@ -57,6 +58,7 @@ export class OngoingEventListItemDto {
   date: Date;
   startTime: string | null;
   location: string | null;
+  createdByUserId: string | null;
   teamsCount: number;
   gamesCount: number;
   playedCount: number;

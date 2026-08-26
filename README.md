@@ -336,6 +336,7 @@ npm run prisma:studio  # browse the DB in Prisma Studio
 | Variable | Purpose |
 |----------|---------|
 | `DATABASE_URL` | PostgreSQL connection string (used by Prisma). |
+| `JWT_SECRET` | Secret used to sign/verify JWTs for the auth endpoints (`/auth/*`, `GET /user/me`). Falls back to a dev-only default when unset — a deployed process (`NODE_ENV` = `production` or `prod`) refuses to boot without it. |
 
 `.env` ships with a remote database URL and a commented‑out localhost alternative.
 Swap them depending on whether you want to develop against a local or shared DB.

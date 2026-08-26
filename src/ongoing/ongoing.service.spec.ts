@@ -1,7 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { OngoingService, isGamePlayed } from './ongoing.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { UserService } from '../user/user.service';
 
 const EVENT_ROW = {
   id: 'event-1',
@@ -55,13 +56,21 @@ function buildPrismaMock() {
 describe('OngoingService', () => {
   let service: OngoingService;
   let prisma: ReturnType<typeof buildPrismaMock>;
+  let userService: { findById: jest.Mock };
+
+  const CURRENT_USER = { sub: 'user-1', email: 'user1@example.com', role: 'admin', jti: 'jti-1', iat: 0, exp: 0 };
 
   beforeEach(async () => {
     prisma = buildPrismaMock();
     prisma.$transaction = jest.fn(async (cb: any) => cb(prisma));
+    userService = { findById: jest.fn(async () => ({ playerId: 'p3' }) as any) };
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [OngoingService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        OngoingService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: UserService, useValue: userService },
+      ],
     }).compile();
 
     service = module.get<OngoingService>(OngoingService);
@@ -69,7 +78,7 @@ describe('OngoingService', () => {
 
   describe('OngoingService.create', () => {
     it('creates the event together with a default config row', async () => {
-      await service.create({ name: 'WBSA Warsaw', date: '2026-08-23T10:00:00.000Z' });
+      await service.create({ name: 'WBSA Warsaw', date: '2026-08-23T10:00:00.000Z' }, CURRENT_USER);
 
       expect(prisma.ongoingEvent.create).toHaveBeenCalledWith({
         data: {
@@ -77,6 +86,7 @@ describe('OngoingService', () => {
           date: new Date('2026-08-23T10:00:00.000Z'),
           startTime: null,
           location: null,
+          createdByUserId: 'user-1',
           config: {
             create: {
               gamesPerPair: 1,
@@ -93,10 +103,10 @@ describe('OngoingService', () => {
     });
 
     it('rejects a missing or empty name without touching Postgres', async () => {
-      await expect(service.create({ name: '   ', date: '2026-08-23T10:00:00.000Z' })).rejects.toThrow(
+      await expect(service.create({ name: '   ', date: '2026-08-23T10:00:00.000Z' }, CURRENT_USER)).rejects.toThrow(
         new BadRequestException('name must be a non-empty string'),
       );
-      await expect(service.create({ date: '2026-08-23T10:00:00.000Z' } as any)).rejects.toThrow(
+      await expect(service.create({ date: '2026-08-23T10:00:00.000Z' } as any, CURRENT_USER)).rejects.toThrow(
         new BadRequestException('name must be a non-empty string'),
       );
 
@@ -104,10 +114,10 @@ describe('OngoingService', () => {
     });
 
     it('rejects a missing or unparseable date without touching Postgres', async () => {
-      await expect(service.create({ name: 'WBSA Warsaw', date: 'tomorrow' })).rejects.toThrow(
+      await expect(service.create({ name: 'WBSA Warsaw', date: 'tomorrow' }, CURRENT_USER)).rejects.toThrow(
         new BadRequestException('date must be a valid date'),
       );
-      await expect(service.create({ name: 'WBSA Warsaw' } as any)).rejects.toThrow(
+      await expect(service.create({ name: 'WBSA Warsaw' } as any, CURRENT_USER)).rejects.toThrow(
         new BadRequestException('date must be a valid date'),
       );
 
@@ -150,7 +160,7 @@ describe('OngoingService', () => {
 
   describe('OngoingService.remove', () => {
     it('deletes the event and lets the cascade clear config, teams and games', async () => {
-      await service.remove('event-1');
+      await service.remove('event-1', CURRENT_USER);
 
       expect(prisma.ongoingEvent.delete).toHaveBeenCalledWith({ where: { id: 'event-1' } });
     });
@@ -158,26 +168,26 @@ describe('OngoingService', () => {
     it('throws a 404 rather than deleting when the event is missing', async () => {
       prisma.ongoingEvent.findUnique = jest.fn(async () => null as any);
 
-      await expect(service.remove('missing')).rejects.toThrow(NotFoundException);
+      await expect(service.remove('missing', CURRENT_USER)).rejects.toThrow(NotFoundException);
       expect(prisma.ongoingEvent.delete).not.toHaveBeenCalled();
     });
   });
 
   describe('OngoingService.updateConfig', () => {
     it('rejects a gamesPerPair outside 1..3', async () => {
-      await expect(service.updateConfig('event-1', { gamesPerPair: 4, courts: 2 })).rejects.toThrow(
+      await expect(service.updateConfig('event-1', { gamesPerPair: 4, courts: 2 }, CURRENT_USER)).rejects.toThrow(
         new BadRequestException('gamesPerPair must be 1, 2 or 3'),
       );
     });
 
     it('rejects fewer than one court', async () => {
-      await expect(service.updateConfig('event-1', { gamesPerPair: 1, courts: 0 })).rejects.toThrow(
+      await expect(service.updateConfig('event-1', { gamesPerPair: 1, courts: 0 }, CURRENT_USER)).rejects.toThrow(
         new BadRequestException('courts must be at least 1'),
       );
     });
 
     it('upserts the config row for the event', async () => {
-      await service.updateConfig('event-1', { gamesPerPair: 2, courts: 3 });
+      await service.updateConfig('event-1', { gamesPerPair: 2, courts: 3 }, CURRENT_USER);
 
       expect(prisma.ongoingEventConfig.upsert).toHaveBeenCalledWith({
         where: { eventId: 'event-1' },
@@ -202,7 +212,7 @@ describe('OngoingService', () => {
     });
 
     it('rejects a missing request body instead of throwing a raw TypeError', async () => {
-      await expect(service.updateConfig('event-1', undefined as any)).rejects.toThrow(
+      await expect(service.updateConfig('event-1', undefined as any, CURRENT_USER)).rejects.toThrow(
         new BadRequestException('gamesPerPair and courts are required'),
       );
     });
@@ -214,7 +224,7 @@ describe('OngoingService', () => {
     });
 
     it('rejects a team whose two players are the same person', async () => {
-      await expect(service.setTeams('event-1', { teams: [{ player1Id: 'p1', player2Id: 'p1' }] })).rejects.toThrow(
+      await expect(service.setTeams('event-1', { teams: [{ player1Id: 'p1', player2Id: 'p1' }] }, CURRENT_USER)).rejects.toThrow(
         new BadRequestException('A team must have two different players'),
       );
     });
@@ -226,14 +236,14 @@ describe('OngoingService', () => {
             { player1Id: 'p1', player2Id: 'p2' },
             { player1Id: 'p1', player2Id: 'p3' },
           ],
-        }),
+        }, CURRENT_USER),
       ).rejects.toThrow(new BadRequestException('Player p1 is already in another team'));
     });
 
     it('rejects an unknown player id', async () => {
       prisma.player.findMany = jest.fn(async () => [{ id: 'p1' }] as any);
 
-      await expect(service.setTeams('event-1', { teams: [{ player1Id: 'p1', player2Id: 'ghost' }] })).rejects.toThrow(
+      await expect(service.setTeams('event-1', { teams: [{ player1Id: 'p1', player2Id: 'ghost' }] }, CURRENT_USER)).rejects.toThrow(
         new NotFoundException('Player with ID ghost not found'),
       );
     });
@@ -253,7 +263,7 @@ describe('OngoingService', () => {
         return { count: 1 };
       });
 
-      await service.setTeams('event-1', { teams: [{ player1Id: 'p1', player2Id: 'p2' }] });
+      await service.setTeams('event-1', { teams: [{ player1Id: 'p1', player2Id: 'p2' }] }, CURRENT_USER);
 
       expect(calls).toEqual(['games.deleteMany', 'teams.deleteMany', 'teams.createMany']);
     });
@@ -264,7 +274,7 @@ describe('OngoingService', () => {
           { player1Id: 'p1', player2Id: 'p2' },
           { player1Id: 'p3', player2Id: 'p4' },
         ],
-      });
+      }, CURRENT_USER);
 
       expect(prisma.ongoingTeam.createMany).toHaveBeenCalledWith({
         data: [
@@ -275,26 +285,26 @@ describe('OngoingService', () => {
     });
 
     it('accepts an empty roster and just clears everything', async () => {
-      await service.setTeams('event-1', { teams: [] });
+      await service.setTeams('event-1', { teams: [] }, CURRENT_USER);
 
       expect(prisma.ongoingTeam.createMany).not.toHaveBeenCalled();
       expect(prisma.ongoingTeam.deleteMany).toHaveBeenCalledWith({ where: { eventId: 'event-1' } });
     });
 
     it('rejects a non-array teams payload instead of throwing a raw TypeError', async () => {
-      await expect(service.setTeams('event-1', { teams: 5 as any })).rejects.toThrow(
+      await expect(service.setTeams('event-1', { teams: 5 as any }, CURRENT_USER)).rejects.toThrow(
         new BadRequestException('teams must be an array'),
       );
     });
 
     it('rejects a missing request body instead of throwing a raw TypeError', async () => {
-      await expect(service.setTeams('event-1', undefined as any)).rejects.toThrow(
+      await expect(service.setTeams('event-1', undefined as any, CURRENT_USER)).rejects.toThrow(
         new BadRequestException('teams must be an array'),
       );
     });
 
     it('rejects a team missing player1Id or player2Id', async () => {
-      await expect(service.setTeams('event-1', { teams: [{ player2Id: 'p2' } as any] })).rejects.toThrow(
+      await expect(service.setTeams('event-1', { teams: [{ player2Id: 'p2' } as any] }, CURRENT_USER)).rejects.toThrow(
         new BadRequestException('A team must include both player1Id and player2Id'),
       );
     });
@@ -304,7 +314,7 @@ describe('OngoingService', () => {
     it('refuses to replace the roster once any match has a result', async () => {
       prisma.ongoingGame.count = jest.fn(async () => 1);
 
-      await expect(service.setTeams('event-1', { teams: [{ player1Id: 'p1', player2Id: 'p2' }] })).rejects.toThrow(
+      await expect(service.setTeams('event-1', { teams: [{ player1Id: 'p1', player2Id: 'p2' }] }, CURRENT_USER)).rejects.toThrow(
         new ConflictException('The tournament has already started; its roster is locked'),
       );
     });
@@ -313,7 +323,7 @@ describe('OngoingService', () => {
       prisma.ongoingGame.count = jest.fn(async () => 0);
       prisma.player.findMany = jest.fn(async () => [{ id: 'p1' }, { id: 'p2' }] as any);
 
-      await service.setTeams('event-1', { teams: [{ player1Id: 'p1', player2Id: 'p2' }] });
+      await service.setTeams('event-1', { teams: [{ player1Id: 'p1', player2Id: 'p2' }] }, CURRENT_USER);
 
       expect(prisma.ongoingGame.count).toHaveBeenCalledWith({
         where: { eventId: 'event-1', team1Points: { not: null }, team2Points: { not: null } },
@@ -323,7 +333,7 @@ describe('OngoingService', () => {
     it('does not touch the roster when the guard rejects', async () => {
       prisma.ongoingGame.count = jest.fn(async () => 2);
 
-      await expect(service.setTeams('event-1', { teams: [] })).rejects.toThrow(ConflictException);
+      await expect(service.setTeams('event-1', { teams: [] }, CURRENT_USER)).rejects.toThrow(ConflictException);
       expect(prisma.ongoingTeam.deleteMany).not.toHaveBeenCalled();
       expect(prisma.ongoingGame.deleteMany).not.toHaveBeenCalled();
     });
@@ -357,7 +367,7 @@ describe('OngoingService', () => {
           } as any),
       );
 
-      await expect(service.generateSchedule('event-1')).rejects.toThrow(
+      await expect(service.generateSchedule('event-1', CURRENT_USER)).rejects.toThrow(
         new BadRequestException('At least two teams are required to generate a schedule'),
       );
     });
@@ -373,13 +383,13 @@ describe('OngoingService', () => {
         return { count: 3 };
       });
 
-      await service.generateSchedule('event-1');
+      await service.generateSchedule('event-1', CURRENT_USER);
 
       expect(calls).toEqual(['deleteMany', 'createMany']);
     });
 
     it('writes one fixture per pairing, each carrying the event id', async () => {
-      await service.generateSchedule('event-1');
+      await service.generateSchedule('event-1', CURRENT_USER);
 
       const data = (prisma.ongoingGame.createMany as jest.Mock).mock.calls[0][0].data;
       expect(data).toHaveLength(3);
@@ -400,7 +410,7 @@ describe('OngoingService', () => {
           } as any),
       );
 
-      await service.generateSchedule('event-1');
+      await service.generateSchedule('event-1', CURRENT_USER);
 
       expect((prisma.ongoingGame.createMany as jest.Mock).mock.calls[0][0].data).toHaveLength(6);
     });
@@ -427,31 +437,31 @@ describe('OngoingService', () => {
     it('throws a 404 naming the id when the game does not exist', async () => {
       prisma.ongoingGame.findUnique = jest.fn(async () => null as any);
 
-      await expect(service.updateGameScore('missing', { team1Points: 15, team2Points: 7 })).rejects.toThrow(
+      await expect(service.updateGameScore('missing', { team1Points: 15, team2Points: 7 }, CURRENT_USER)).rejects.toThrow(
         new NotFoundException('Ongoing game with ID missing not found'),
       );
     });
 
     it('rejects a negative score', async () => {
-      await expect(service.updateGameScore('game-1', { team1Points: -1, team2Points: 7 })).rejects.toThrow(
+      await expect(service.updateGameScore('game-1', { team1Points: -1, team2Points: 7 }, CURRENT_USER)).rejects.toThrow(
         new BadRequestException('Points must be whole numbers of 0 or more'),
       );
     });
 
     it('rejects a non-integer score', async () => {
-      await expect(service.updateGameScore('game-1', { team1Points: 15.5, team2Points: 7 })).rejects.toThrow(
+      await expect(service.updateGameScore('game-1', { team1Points: 15.5, team2Points: 7 }, CURRENT_USER)).rejects.toThrow(
         new BadRequestException('Points must be whole numbers of 0 or more'),
       );
     });
 
     it('rejects a draw, because a set always has a winner', async () => {
-      await expect(service.updateGameScore('game-1', { team1Points: 15, team2Points: 15 })).rejects.toThrow(
+      await expect(service.updateGameScore('game-1', { team1Points: 15, team2Points: 15 }, CURRENT_USER)).rejects.toThrow(
         new BadRequestException('A set cannot end in a draw'),
       );
     });
 
     it('stores both scores on the game', async () => {
-      const result = await service.updateGameScore('game-1', { team1Points: 15, team2Points: 7 });
+      const result = await service.updateGameScore('game-1', { team1Points: 15, team2Points: 7 }, CURRENT_USER);
 
       expect(prisma.ongoingGame.update).toHaveBeenCalledWith({
         where: { id: 'game-1' },
@@ -462,25 +472,25 @@ describe('OngoingService', () => {
     });
 
     it('fails closed with a 400 when invoked directly with no dto, rather than throwing a TypeError', async () => {
-      await expect(service.updateGameScore('game-1', undefined as any)).rejects.toThrow(
+      await expect(service.updateGameScore('game-1', undefined as any, CURRENT_USER)).rejects.toThrow(
         new BadRequestException('team1Points and team2Points are required'),
       );
     });
 
     it('rejects a string score instead of throwing a raw TypeError', async () => {
-      await expect(service.updateGameScore('game-1', { team1Points: '15' as any, team2Points: 7 })).rejects.toThrow(
+      await expect(service.updateGameScore('game-1', { team1Points: '15' as any, team2Points: 7 }, CURRENT_USER)).rejects.toThrow(
         new BadRequestException('Points must be whole numbers of 0 or more'),
       );
     });
 
     it('rejects a null score instead of throwing a raw TypeError', async () => {
-      await expect(service.updateGameScore('game-1', { team1Points: null as any, team2Points: 7 })).rejects.toThrow(
+      await expect(service.updateGameScore('game-1', { team1Points: null as any, team2Points: 7 }, CURRENT_USER)).rejects.toThrow(
         new BadRequestException('Points must be whole numbers of 0 or more'),
       );
     });
 
     it('rejects an absent team2Points instead of throwing a raw TypeError', async () => {
-      await expect(service.updateGameScore('game-1', { team1Points: 15 } as any)).rejects.toThrow(
+      await expect(service.updateGameScore('game-1', { team1Points: 15 } as any, CURRENT_USER)).rejects.toThrow(
         new BadRequestException('Points must be whole numbers of 0 or more'),
       );
     });
@@ -506,7 +516,7 @@ describe('OngoingService', () => {
           } as any),
       );
 
-      await expect(service.updateGameScore('g1', { team1Points: 15, team2Points: 9 })).rejects.toThrow(
+      await expect(service.updateGameScore('g1', { team1Points: 15, team2Points: 9 }, CURRENT_USER)).rejects.toThrow(
         new BadRequestException('Both teams must be known before a result can be recorded'),
       );
       expect(prisma.ongoingGame.update).not.toHaveBeenCalled();
@@ -531,7 +541,7 @@ describe('OngoingService', () => {
           } as any),
       );
 
-      await expect(service.updateGameScore('g1', { team1Points: 15, team2Points: 9 })).rejects.toThrow(
+      await expect(service.updateGameScore('g1', { team1Points: 15, team2Points: 9 }, CURRENT_USER)).rejects.toThrow(
         BadRequestException,
       );
     });
@@ -645,7 +655,7 @@ describe('OngoingService', () => {
     });
 
     it('nulls both scores and keeps the fixture', async () => {
-      const result = await service.clearGameResult('game-1');
+      const result = await service.clearGameResult('game-1', CURRENT_USER);
 
       expect(prisma.ongoingGame.update).toHaveBeenCalledWith({
         where: { id: 'game-1' },
@@ -658,7 +668,7 @@ describe('OngoingService', () => {
     it('throws a 404 when the game does not exist', async () => {
       prisma.ongoingGame.findUnique = jest.fn(async () => null as any);
 
-      await expect(service.clearGameResult('missing')).rejects.toThrow(NotFoundException);
+      await expect(service.clearGameResult('missing', CURRENT_USER)).rejects.toThrow(NotFoundException);
     });
   });
 
@@ -683,7 +693,7 @@ describe('OngoingService', () => {
       prisma.ongoingGame.findUnique = jest.fn(async () => groupGame() as any);
       prisma.ongoingGame.count = jest.fn(async () => 1);
 
-      await expect(service.updateGameScore('g-group-1', { team1Points: 15, team2Points: 10 })).rejects.toThrow(
+      await expect(service.updateGameScore('g-group-1', { team1Points: 15, team2Points: 10 }, CURRENT_USER)).rejects.toThrow(
         new ConflictException('Group results are locked once the playoff has been generated; delete the playoff to edit them'),
       );
       expect(prisma.ongoingGame.update).not.toHaveBeenCalled();
@@ -693,7 +703,7 @@ describe('OngoingService', () => {
       prisma.ongoingGame.findUnique = jest.fn(async () => groupGame({ team1Points: 15, team2Points: 10 }) as any);
       prisma.ongoingGame.count = jest.fn(async () => 1);
 
-      await expect(service.clearGameResult('g-group-1')).rejects.toThrow(
+      await expect(service.clearGameResult('g-group-1', CURRENT_USER)).rejects.toThrow(
         new ConflictException('Group results are locked once the playoff has been generated; delete the playoff to edit them'),
       );
       expect(prisma.ongoingGame.update).not.toHaveBeenCalled();
@@ -704,7 +714,7 @@ describe('OngoingService', () => {
       prisma.ongoingGame.count = jest.fn(async () => 0);
       prisma.ongoingGame.update = jest.fn(async (args: any) => ({ ...groupGame(), ...args.data }));
 
-      const result = await service.updateGameScore('g-group-1', { team1Points: 15, team2Points: 10 });
+      const result = await service.updateGameScore('g-group-1', { team1Points: 15, team2Points: 10 }, CURRENT_USER);
 
       expect(prisma.ongoingGame.update).toHaveBeenCalledWith({
         where: { id: 'g-group-1' },
@@ -718,7 +728,7 @@ describe('OngoingService', () => {
       prisma.ongoingGame.count = jest.fn(async () => 0);
       prisma.ongoingGame.update = jest.fn(async (args: any) => ({ ...groupGame(), ...args.data }));
 
-      const result = await service.clearGameResult('g-group-1');
+      const result = await service.clearGameResult('g-group-1', CURRENT_USER);
 
       expect(prisma.ongoingGame.update).toHaveBeenCalledWith({
         where: { id: 'g-group-1' },
@@ -769,7 +779,7 @@ describe('OngoingService', () => {
       prisma.ongoingGame.findUnique = jest.fn(async () => playoffGame({ bracketSlot: 0 }) as any);
       prisma.ongoingGame.findFirst = jest.fn(async () => nextRoundGame({ bracketRound: 2, bracketSlot: 0 }) as any);
 
-      await service.updateGameScore('g1', { team1Points: 15, team2Points: 10 });
+      await service.updateGameScore('g1', { team1Points: 15, team2Points: 10 }, CURRENT_USER);
 
       expect(prisma.ongoingGame.findFirst).toHaveBeenCalledWith({
         where: { eventId: 'event-1', phase: 'playoff', bracketRound: 2, bracketSlot: 0 },
@@ -784,7 +794,7 @@ describe('OngoingService', () => {
       prisma.ongoingGame.findUnique = jest.fn(async () => playoffGame({ bracketSlot: 1, team1Id: 't3', team2Id: 't4' }) as any);
       prisma.ongoingGame.findFirst = jest.fn(async () => nextRoundGame({ bracketRound: 2, bracketSlot: 0 }) as any);
 
-      await service.updateGameScore('g1', { team1Points: 10, team2Points: 15 });
+      await service.updateGameScore('g1', { team1Points: 10, team2Points: 15 }, CURRENT_USER);
 
       expect(prisma.ongoingGame.findFirst).toHaveBeenCalledWith({
         where: { eventId: 'event-1', phase: 'playoff', bracketRound: 2, bracketSlot: 0 },
@@ -801,7 +811,7 @@ describe('OngoingService', () => {
       );
       prisma.ongoingGame.findFirst = jest.fn(async () => nextRoundGame({ bracketRound: 2, bracketSlot: 1 }) as any);
 
-      await service.updateGameScore('g1', { team1Points: 15, team2Points: 9 });
+      await service.updateGameScore('g1', { team1Points: 15, team2Points: 9 }, CURRENT_USER);
 
       expect(prisma.ongoingGame.findFirst).toHaveBeenCalledWith({
         where: { eventId: 'event-1', phase: 'playoff', bracketRound: 2, bracketSlot: 1 },
@@ -816,7 +826,7 @@ describe('OngoingService', () => {
       prisma.ongoingGame.findUnique = jest.fn(async () => playoffGame({ team1Id: 't1', team2Id: 't2' }) as any);
       prisma.ongoingGame.findFirst = jest.fn(async () => nextRoundGame() as any);
 
-      await service.updateGameScore('g1', { team1Points: 5, team2Points: 15 });
+      await service.updateGameScore('g1', { team1Points: 5, team2Points: 15 }, CURRENT_USER);
 
       // team2 (t2) won on points, so t2 — not t1 — must be the id written downstream.
       expect(prisma.ongoingGame.update).toHaveBeenCalledWith({
@@ -829,7 +839,7 @@ describe('OngoingService', () => {
       prisma.ongoingGame.findUnique = jest.fn(async () => playoffGame({ bracketRound: 2, bracketSlot: 0 }) as any);
       prisma.ongoingGame.findFirst = jest.fn(async () => null as any);
 
-      await expect(service.updateGameScore('g1', { team1Points: 15, team2Points: 10 })).resolves.toBeDefined();
+      await expect(service.updateGameScore('g1', { team1Points: 15, team2Points: 10 }, CURRENT_USER)).resolves.toBeDefined();
 
       expect(prisma.ongoingGame.findFirst).toHaveBeenCalledWith({
         where: { eventId: 'event-1', phase: 'playoff', bracketRound: 3, bracketSlot: 0 },
@@ -842,7 +852,7 @@ describe('OngoingService', () => {
       prisma.ongoingGame.findUnique = jest.fn(async () => playoffGame() as any);
       prisma.ongoingGame.findFirst = jest.fn(async () => nextRoundGame() as any);
 
-      await service.updateGameScore('g1', { team1Points: 15, team2Points: 10 });
+      await service.updateGameScore('g1', { team1Points: 15, team2Points: 10 }, CURRENT_USER);
 
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     });
@@ -851,7 +861,7 @@ describe('OngoingService', () => {
       prisma.ongoingGame.findUnique = jest.fn(async () => playoffGame() as any);
       prisma.ongoingGame.findFirst = jest.fn(async () => nextRoundGame() as any);
 
-      await service.updateGameScore('g1', { team1Points: 15, team2Points: 10 });
+      await service.updateGameScore('g1', { team1Points: 15, team2Points: 10 }, CURRENT_USER);
 
       const advancementCall = (prisma.ongoingGame.update as jest.Mock).mock.calls.find(
         (call) => call[0].where.id === 'g-next',
@@ -899,7 +909,7 @@ describe('OngoingService', () => {
           } as any),
       );
 
-      await expect(service.clearGameResult('g1')).rejects.toThrow(
+      await expect(service.clearGameResult('g1', CURRENT_USER)).rejects.toThrow(
         new ConflictException("This game's winner has already advanced into a played later round; clear that result first"),
       );
       expect(prisma.ongoingGame.update).not.toHaveBeenCalled();
@@ -922,7 +932,7 @@ describe('OngoingService', () => {
           } as any),
       );
 
-      const result = await service.clearGameResult('g1');
+      const result = await service.clearGameResult('g1', CURRENT_USER);
 
       expect(prisma.ongoingGame.update).toHaveBeenCalledWith({
         where: { id: 'g-next' },
@@ -939,7 +949,7 @@ describe('OngoingService', () => {
       prisma.ongoingGame.findUnique = jest.fn(async () => playedPlayoffGame({ bracketRound: 2, bracketSlot: 0 }) as any);
       prisma.ongoingGame.findFirst = jest.fn(async () => null as any);
 
-      const result = await service.clearGameResult('g1');
+      const result = await service.clearGameResult('g1', CURRENT_USER);
 
       expect(prisma.ongoingGame.update).toHaveBeenCalledWith({
         where: { id: 'g1' },
@@ -994,14 +1004,14 @@ describe('OngoingService', () => {
       prisma.ongoingGame.findUnique = jest.fn(async () => playedPlayoffGame() as any);
       prisma.ongoingGame.findFirst = jest.fn(async () => successor({ team1Points: 15, team2Points: 12 }) as any);
 
-      await expect(service.updateGameScore('g1', { team1Points: 10, team2Points: 15 })).rejects.toThrow(RULE_4);
+      await expect(service.updateGameScore('g1', { team1Points: 10, team2Points: 15 }, CURRENT_USER)).rejects.toThrow(RULE_4);
     });
 
     it('writes nothing at all when it refuses, so the score and the bracket stay in agreement', async () => {
       prisma.ongoingGame.findUnique = jest.fn(async () => playedPlayoffGame() as any);
       prisma.ongoingGame.findFirst = jest.fn(async () => successor({ team1Points: 15, team2Points: 12 }) as any);
 
-      await expect(service.updateGameScore('g1', { team1Points: 10, team2Points: 15 })).rejects.toThrow(RULE_4);
+      await expect(service.updateGameScore('g1', { team1Points: 10, team2Points: 15 }, CURRENT_USER)).rejects.toThrow(RULE_4);
       expect(prisma.ongoingGame.update).not.toHaveBeenCalled();
     });
 
@@ -1012,7 +1022,7 @@ describe('OngoingService', () => {
       // t1 still wins, so the successor's slot would not actually change — refused anyway, because
       // "undo the later round first" is a rule a caller can hold in their head; a same-winner
       // exception is not.
-      await expect(service.updateGameScore('g1', { team1Points: 21, team2Points: 3 })).rejects.toThrow(RULE_4);
+      await expect(service.updateGameScore('g1', { team1Points: 21, team2Points: 3 }, CURRENT_USER)).rejects.toThrow(RULE_4);
       expect(prisma.ongoingGame.update).not.toHaveBeenCalled();
     });
 
@@ -1020,7 +1030,7 @@ describe('OngoingService', () => {
       prisma.ongoingGame.findUnique = jest.fn(async () => playedPlayoffGame() as any);
       prisma.ongoingGame.findFirst = jest.fn(async () => successor() as any);
 
-      await service.updateGameScore('g1', { team1Points: 10, team2Points: 15 });
+      await service.updateGameScore('g1', { team1Points: 10, team2Points: 15 }, CURRENT_USER);
 
       expect(prisma.ongoingGame.update).toHaveBeenCalledWith({
         where: { id: 'g1' },
@@ -1036,7 +1046,7 @@ describe('OngoingService', () => {
       prisma.ongoingGame.findUnique = jest.fn(async () => playedPlayoffGame({ bracketRound: 2 }) as any);
       prisma.ongoingGame.findFirst = jest.fn(async () => null as any);
 
-      await service.updateGameScore('g1', { team1Points: 10, team2Points: 15 });
+      await service.updateGameScore('g1', { team1Points: 10, team2Points: 15 }, CURRENT_USER);
 
       expect(prisma.ongoingGame.update).toHaveBeenCalledWith({
         where: { id: 'g1' },
@@ -1052,7 +1062,7 @@ describe('OngoingService', () => {
       prisma.ongoingGame.findFirst = jest.fn(async () => null as any);
       prisma.ongoingGame.count = jest.fn(async () => 0);
 
-      await service.updateGameScore('g1', { team1Points: 10, team2Points: 15 });
+      await service.updateGameScore('g1', { team1Points: 10, team2Points: 15 }, CURRENT_USER);
 
       expect(prisma.ongoingGame.update).toHaveBeenCalledWith({
         where: { id: 'g1' },
@@ -1121,7 +1131,7 @@ describe('OngoingService', () => {
       prisma.ongoingGame.findUnique = jest.fn(async () => semifinal({ bracketSlot: 0 }) as any);
       prisma.ongoingGame.findFirst = routeFindFirst(finalGame(), thirdPlaceGame());
 
-      await service.updateGameScore('g1', { team1Points: 15, team2Points: 10 });
+      await service.updateGameScore('g1', { team1Points: 15, team2Points: 10 }, CURRENT_USER);
 
       expect(prisma.ongoingGame.update).toHaveBeenCalledWith({ where: { id: 'g-final' }, data: { team1Id: 't1' } });
       expect(prisma.ongoingGame.update).toHaveBeenCalledWith({ where: { id: 'g-third' }, data: { team1Id: 't2' } });
@@ -1136,7 +1146,7 @@ describe('OngoingService', () => {
         thirdPlaceGame(),
       );
 
-      await service.updateGameScore('g1', { team1Points: 10, team2Points: 15 });
+      await service.updateGameScore('g1', { team1Points: 10, team2Points: 15 }, CURRENT_USER);
 
       // t4 won, t3 lost.
       expect(prisma.ongoingGame.update).toHaveBeenCalledWith({ where: { id: 'g-final' }, data: { team2Id: 't4' } });
@@ -1149,7 +1159,7 @@ describe('OngoingService', () => {
       prisma.ongoingGame.findUnique = jest.fn(async () => semifinal({ bracketRound: 1, bracketSlot: 0 }) as any);
       prisma.ongoingGame.findFirst = routeFindFirst(finalGame({ bracketRound: 2 }), thirdPlaceGame());
 
-      await service.updateGameScore('g1', { team1Points: 15, team2Points: 10 });
+      await service.updateGameScore('g1', { team1Points: 15, team2Points: 10 }, CURRENT_USER);
 
       // Score write + exactly one advancement write (the quarterfinal's normal successor only).
       expect(prisma.ongoingGame.update).toHaveBeenCalledTimes(2);
@@ -1163,7 +1173,7 @@ describe('OngoingService', () => {
       prisma.ongoingGame.findUnique = jest.fn(async () => semifinal({ bracketRound: 2, bracketSlot: 0 }) as any);
       prisma.ongoingGame.findFirst = jest.fn(async () => null as any);
 
-      await service.updateGameScore('g1', { team1Points: 15, team2Points: 10 });
+      await service.updateGameScore('g1', { team1Points: 15, team2Points: 10 }, CURRENT_USER);
 
       expect(prisma.ongoingGame.aggregate).not.toHaveBeenCalled();
       expect(prisma.ongoingGame.update).toHaveBeenCalledTimes(1);
@@ -1173,7 +1183,7 @@ describe('OngoingService', () => {
       prisma.ongoingGame.findUnique = jest.fn(async () => semifinal() as any);
       prisma.ongoingGame.findFirst = routeFindFirst(finalGame(), thirdPlaceGame());
 
-      await service.updateGameScore('g1', { team1Points: 15, team2Points: 10 });
+      await service.updateGameScore('g1', { team1Points: 15, team2Points: 10 }, CURRENT_USER);
 
       const thirdPlaceCall = (prisma.ongoingGame.update as jest.Mock).mock.calls.find(
         (call) => call[0].where.id === 'g-third',
@@ -1247,7 +1257,7 @@ describe('OngoingService', () => {
         thirdPlaceGame({ team1Points: 15, team2Points: 8 }), // played
       );
 
-      await expect(service.updateGameScore('g1', { team1Points: 10, team2Points: 15 })).rejects.toThrow(RULE_4);
+      await expect(service.updateGameScore('g1', { team1Points: 10, team2Points: 15 }, CURRENT_USER)).rejects.toThrow(RULE_4);
       expect(prisma.ongoingGame.update).not.toHaveBeenCalled();
     });
 
@@ -1255,7 +1265,7 @@ describe('OngoingService', () => {
       prisma.ongoingGame.findUnique = jest.fn(async () => semifinal() as any);
       prisma.ongoingGame.findFirst = routeFindFirst(finalGame(), thirdPlaceGame({ team1Points: 15, team2Points: 8 }));
 
-      await expect(service.clearGameResult('g1')).rejects.toThrow(RULE_4);
+      await expect(service.clearGameResult('g1', CURRENT_USER)).rejects.toThrow(RULE_4);
       expect(prisma.ongoingGame.update).not.toHaveBeenCalled();
     });
 
@@ -1267,7 +1277,7 @@ describe('OngoingService', () => {
         thirdPlaceGame(), // still unplayed
       );
 
-      await expect(service.updateGameScore('g1', { team1Points: 10, team2Points: 15 })).rejects.toThrow(RULE_4);
+      await expect(service.updateGameScore('g1', { team1Points: 10, team2Points: 15 }, CURRENT_USER)).rejects.toThrow(RULE_4);
       expect(prisma.ongoingGame.update).not.toHaveBeenCalled();
     });
 
@@ -1275,7 +1285,7 @@ describe('OngoingService', () => {
       prisma.ongoingGame.findUnique = jest.fn(async () => semifinal() as any);
       prisma.ongoingGame.findFirst = routeFindFirst(finalGame(), thirdPlaceGame());
 
-      await expect(service.updateGameScore('g1', { team1Points: 10, team2Points: 15 })).resolves.toBeDefined();
+      await expect(service.updateGameScore('g1', { team1Points: 10, team2Points: 15 }, CURRENT_USER)).resolves.toBeDefined();
       expect(prisma.ongoingGame.update).toHaveBeenCalledWith({
         where: { id: 'g1' },
         data: { team1Points: 10, team2Points: 15 },
@@ -1340,7 +1350,7 @@ describe('OngoingService', () => {
       prisma.ongoingGame.findUnique = jest.fn(async () => semifinal() as any);
       prisma.ongoingGame.findFirst = routeFindFirst(finalGame(), thirdPlaceGame());
 
-      const result = await service.clearGameResult('g1');
+      const result = await service.clearGameResult('g1', CURRENT_USER);
 
       expect(prisma.ongoingGame.update).toHaveBeenCalledWith({ where: { id: 'g-final' }, data: { team1Id: null } });
       expect(prisma.ongoingGame.update).toHaveBeenCalledWith({ where: { id: 'g-third' }, data: { team1Id: null } });
@@ -1368,7 +1378,7 @@ describe('OngoingService', () => {
     });
 
     it('appends the team without touching the existing roster', async () => {
-      await service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' });
+      await service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' }, CURRENT_USER);
 
       expect(prisma.ongoingTeam.create).toHaveBeenCalledWith({
         data: { eventId: 'event-1', player1Id: 'p3', player2Id: 'p4' },
@@ -1380,7 +1390,7 @@ describe('OngoingService', () => {
     it('refuses once the tournament has started', async () => {
       prisma.ongoingGame.count = jest.fn(async () => 1);
 
-      await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' })).rejects.toThrow(ConflictException);
+      await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' }, CURRENT_USER)).rejects.toThrow(ConflictException);
       expect(prisma.ongoingTeam.create).not.toHaveBeenCalled();
     });
 
@@ -1393,7 +1403,7 @@ describe('OngoingService', () => {
           } as any),
       );
 
-      await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' })).rejects.toThrow(
+      await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' }, CURRENT_USER)).rejects.toThrow(
         new ConflictException('Registration for this tournament has closed'),
       );
     });
@@ -1418,14 +1428,14 @@ describe('OngoingService', () => {
       it('is open for a tournament dated exactly today', async () => {
         prisma.ongoingEvent.findUnique = jest.fn(async () => eventDatedAt(NOW) as any);
 
-        await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' })).resolves.toBeDefined();
+        await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' }, CURRENT_USER)).resolves.toBeDefined();
       });
 
       it('is closed for a tournament dated yesterday', async () => {
         const yesterday = new Date(Date.UTC(NOW.getUTCFullYear(), NOW.getUTCMonth(), NOW.getUTCDate() - 1));
         prisma.ongoingEvent.findUnique = jest.fn(async () => eventDatedAt(yesterday) as any);
 
-        await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' })).rejects.toThrow(
+        await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' }, CURRENT_USER)).rejects.toThrow(
           new ConflictException('Registration for this tournament has closed'),
         );
       });
@@ -1434,14 +1444,14 @@ describe('OngoingService', () => {
         const todayLate = new Date(Date.UTC(NOW.getUTCFullYear(), NOW.getUTCMonth(), NOW.getUTCDate(), 23, 0, 0));
         prisma.ongoingEvent.findUnique = jest.fn(async () => eventDatedAt(todayLate) as any);
 
-        await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' })).resolves.toBeDefined();
+        await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' }, CURRENT_USER)).resolves.toBeDefined();
       });
 
       it('is open for a tournament dated tomorrow', async () => {
         const tomorrow = new Date(Date.UTC(NOW.getUTCFullYear(), NOW.getUTCMonth(), NOW.getUTCDate() + 1));
         prisma.ongoingEvent.findUnique = jest.fn(async () => eventDatedAt(tomorrow) as any);
 
-        await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' })).resolves.toBeDefined();
+        await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' }, CURRENT_USER)).resolves.toBeDefined();
       });
     });
 
@@ -1454,7 +1464,7 @@ describe('OngoingService', () => {
           } as any),
       );
 
-      await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' })).rejects.toThrow(
+      await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' }, CURRENT_USER)).rejects.toThrow(
         new ConflictException('This tournament is full'),
       );
       expect(prisma.ongoingTeam.create).not.toHaveBeenCalled();
@@ -1474,7 +1484,7 @@ describe('OngoingService', () => {
           } as any),
       );
 
-      await service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' });
+      await service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' }, CURRENT_USER);
 
       expect(prisma.ongoingTeam.create).toHaveBeenCalledWith({
         data: { eventId: 'event-1', player1Id: 'p3', player2Id: 'p4' },
@@ -1482,14 +1492,14 @@ describe('OngoingService', () => {
     });
 
     it('refuses a player who is already in a team of this tournament', async () => {
-      await expect(service.addTeam('event-1', { player1Id: 'p1', player2Id: 'p3' })).rejects.toThrow(
+      await expect(service.addTeam('event-1', { player1Id: 'p1', player2Id: 'p3' }, CURRENT_USER)).rejects.toThrow(
         new BadRequestException('Player p1 is already in another team'),
       );
       expect(prisma.ongoingTeam.create).not.toHaveBeenCalled();
     });
 
     it('refuses two identical players', async () => {
-      await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p3' })).rejects.toThrow(
+      await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p3' }, CURRENT_USER)).rejects.toThrow(
         new BadRequestException('A team must have two different players'),
       );
     });
@@ -1497,9 +1507,146 @@ describe('OngoingService', () => {
     it('refuses an unknown player', async () => {
       prisma.player.findMany = jest.fn(async () => [{ id: 'p3' }] as any);
 
-      await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'ghost' })).rejects.toThrow(
+      await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'ghost' }, CURRENT_USER)).rejects.toThrow(
         new NotFoundException('Player with ID ghost not found'),
       );
+    });
+  });
+
+  describe('OngoingService authorization', () => {
+    const NON_CREATOR_USER = { ...CURRENT_USER, sub: 'user-2', role: 'player' };
+    const CREATOR_USER = { ...CURRENT_USER, sub: 'creator-1', role: 'player' };
+    const EVENT_WITH_CREATOR = { ...EVENT_ROW, createdByUserId: 'creator-1' };
+
+    beforeEach(() => {
+      prisma.ongoingEvent.findUnique = jest.fn(async () => EVENT_WITH_CREATOR as any);
+    });
+
+    it('create() stamps the event with the current user as creator', async () => {
+      await service.create({ name: 'T', date: '2030-01-01T00:00:00.000Z' }, CURRENT_USER);
+
+      const args = (prisma.ongoingEvent.create as jest.Mock).mock.calls[0][0];
+      expect(args.data.createdByUserId).toBe('user-1');
+    });
+
+    it('remove() allows the creator', async () => {
+      await expect(service.remove('event-1', CREATOR_USER)).resolves.toBeUndefined();
+      expect(prisma.ongoingEvent.delete).toHaveBeenCalled();
+    });
+
+    it('remove() allows an admin who is not the creator', async () => {
+      const admin = { ...NON_CREATOR_USER, role: 'admin' };
+
+      await expect(service.remove('event-1', admin)).resolves.toBeUndefined();
+      expect(prisma.ongoingEvent.delete).toHaveBeenCalled();
+    });
+
+    it('remove() refuses a logged-in user who is neither the creator nor an admin', async () => {
+      await expect(service.remove('event-1', NON_CREATOR_USER)).rejects.toThrow(ForbiddenException);
+      expect(prisma.ongoingEvent.delete).not.toHaveBeenCalled();
+    });
+
+    it('updateConfig() refuses a non-creator, non-admin user', async () => {
+      await expect(
+        service.updateConfig('event-1', { gamesPerPair: 1, courts: 1 }, NON_CREATOR_USER),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('setTeams() refuses a non-creator, non-admin user', async () => {
+      await expect(service.setTeams('event-1', { teams: [] }, NON_CREATOR_USER)).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+
+    it('generateSchedule() refuses a non-creator, non-admin user', async () => {
+      await expect(service.generateSchedule('event-1', NON_CREATOR_USER)).rejects.toThrow(ForbiddenException);
+    });
+
+    it('generatePlayoff() refuses a non-creator, non-admin user', async () => {
+      await expect(service.generatePlayoff('event-1', NON_CREATOR_USER)).rejects.toThrow(ForbiddenException);
+    });
+
+    it('deletePlayoff() refuses a non-creator, non-admin user', async () => {
+      await expect(service.deletePlayoff('event-1', NON_CREATOR_USER)).rejects.toThrow(ForbiddenException);
+    });
+
+    it('finishTournament() refuses a non-creator, non-admin user', async () => {
+      prisma.ongoingGame.count = jest.fn(async () => 0);
+      await expect(service.finishTournament('event-1', NON_CREATOR_USER)).rejects.toThrow(ForbiddenException);
+    });
+
+    it('updateGameScore() refuses a non-creator, non-admin user', async () => {
+      prisma.ongoingGame.findUnique = jest.fn(
+        async () => ({ eventId: 'event-1', team1Id: 't1', team2Id: 't2', phase: 'group' }) as any,
+      );
+
+      await expect(
+        service.updateGameScore('game-1', { team1Points: 21, team2Points: 15 }, NON_CREATOR_USER),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('clearGameResult() refuses a non-creator, non-admin user', async () => {
+      prisma.ongoingGame.findUnique = jest.fn(
+        async () => ({ eventId: 'event-1', team1Id: 't1', team2Id: 't2', phase: 'group' }) as any,
+      );
+
+      await expect(service.clearGameResult('game-1', NON_CREATOR_USER)).rejects.toThrow(ForbiddenException);
+    });
+
+    it('removeTeam() refuses a non-creator, non-admin user', async () => {
+      prisma.ongoingTeam.findUnique = jest.fn(async () => ({ id: 't1', eventId: 'event-1' }) as any);
+      prisma.ongoingGame.count = jest.fn(async () => 0);
+
+      await expect(service.removeTeam('t1', NON_CREATOR_USER)).rejects.toThrow(ForbiddenException);
+    });
+  });
+
+  describe('OngoingService.addTeam self-registration rule', () => {
+    const OPEN_EVENT = {
+      ...EVENT_ROW,
+      date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      config: { gamesPerPair: 1, courts: 2, maxTeams: null },
+      teams: [],
+    };
+
+    beforeEach(() => {
+      prisma.ongoingEvent.findUnique = jest.fn(async () => OPEN_EVENT as any);
+      prisma.ongoingGame.count = jest.fn(async () => 0);
+      prisma.player.findMany = jest.fn(async () => [{ id: 'p3' }, { id: 'p4' }] as any);
+      prisma.ongoingTeam.create = jest.fn(async () => ({ id: 't2' }));
+    });
+
+    it('allows registration when the current user is player1', async () => {
+      userService.findById.mockResolvedValue({ playerId: 'p3' } as any);
+
+      await expect(
+        service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' }, CURRENT_USER),
+      ).resolves.toBeDefined();
+    });
+
+    it('allows registration when the current user is player2', async () => {
+      userService.findById.mockResolvedValue({ playerId: 'p4' } as any);
+
+      await expect(
+        service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' }, CURRENT_USER),
+      ).resolves.toBeDefined();
+    });
+
+    it('refuses when neither player is the current user', async () => {
+      userService.findById.mockResolvedValue({ playerId: 'p5' } as any);
+
+      await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' }, CURRENT_USER)).rejects.toThrow(
+        new BadRequestException('You must register yourself as one of the two players'),
+      );
+      expect(prisma.ongoingTeam.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses when the current user has no linked player', async () => {
+      userService.findById.mockResolvedValue({ playerId: null } as any);
+
+      await expect(
+        service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' }, CURRENT_USER),
+      ).rejects.toThrow(new BadRequestException('You must register yourself as one of the two players'));
     });
   });
 
@@ -1513,7 +1660,7 @@ describe('OngoingService', () => {
     it('throws a 404 naming the id when the team does not exist', async () => {
       prisma.ongoingTeam.findUnique = jest.fn(async () => null as any);
 
-      await expect(service.removeTeam('missing')).rejects.toThrow(
+      await expect(service.removeTeam('missing', CURRENT_USER)).rejects.toThrow(
         new NotFoundException('Ongoing team with ID missing not found'),
       );
     });
@@ -1521,12 +1668,12 @@ describe('OngoingService', () => {
     it('refuses once the tournament has started', async () => {
       prisma.ongoingGame.count = jest.fn(async () => 1);
 
-      await expect(service.removeTeam('t1')).rejects.toThrow(ConflictException);
+      await expect(service.removeTeam('t1', CURRENT_USER)).rejects.toThrow(ConflictException);
       expect(prisma.ongoingTeam.delete).not.toHaveBeenCalled();
     });
 
     it('deletes the team, letting the FK cascade take its unplayed fixtures', async () => {
-      await service.removeTeam('t1');
+      await service.removeTeam('t1', CURRENT_USER);
 
       expect(prisma.ongoingTeam.delete).toHaveBeenCalledWith({ where: { id: 't1' } });
     });
@@ -1536,7 +1683,7 @@ describe('OngoingService', () => {
       // actually binds to team.eventId rather than passing against a hardcoded 'event-1'.
       prisma.ongoingTeam.findUnique = jest.fn(async () => ({ id: 't1', eventId: 'event-owning-the-team' } as any));
 
-      await service.removeTeam('t1');
+      await service.removeTeam('t1', CURRENT_USER);
 
       expect(prisma.ongoingGame.count).toHaveBeenCalledWith({
         where: { eventId: 'event-owning-the-team', team1Points: { not: null }, team2Points: { not: null } },
@@ -1644,7 +1791,7 @@ describe('OngoingService', () => {
       // count that assertPlanning issues with PLAYED_GAME_WHERE.
       prisma.ongoingGame.count = jest.fn(async () => [playedGame].filter(isGamePlayed).length);
 
-      await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' })).rejects.toThrow(ConflictException);
+      await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' }, CURRENT_USER)).rejects.toThrow(ConflictException);
     });
   });
 
@@ -1659,7 +1806,7 @@ describe('OngoingService', () => {
         date: '2030-01-01T10:00:00.000Z',
         maxTeams: 8,
         teams: [{ player1Id: 'p1', player2Id: 'p2' }],
-      });
+      }, CURRENT_USER);
 
       const args = (prisma.ongoingEvent.create as jest.Mock).mock.calls[0][0];
       expect(args.data.config.create).toEqual({
@@ -1677,13 +1824,13 @@ describe('OngoingService', () => {
       prisma.player.findMany = jest.fn(async () => [] as any);
 
       await expect(
-        service.create({ name: 'T', date: '2030-01-01T10:00:00.000Z', teams: [{ player1Id: 'p1', player2Id: 'p2' }] }),
+        service.create({ name: 'T', date: '2030-01-01T10:00:00.000Z', teams: [{ player1Id: 'p1', player2Id: 'p2' }] }, CURRENT_USER),
       ).rejects.toThrow(NotFoundException);
       expect(prisma.ongoingEvent.create).not.toHaveBeenCalled();
     });
 
     it('still creates a tournament with no roster at all', async () => {
-      await service.create({ name: 'T', date: '2030-01-01T10:00:00.000Z' });
+      await service.create({ name: 'T', date: '2030-01-01T10:00:00.000Z' }, CURRENT_USER);
 
       const args = (prisma.ongoingEvent.create as jest.Mock).mock.calls[0][0];
       expect(args.data.teams).toBeUndefined();
@@ -1695,7 +1842,7 @@ describe('OngoingService', () => {
     const base = { name: 'T', date: '2030-01-01T00:00:00.000Z' };
 
     it('stores a valid HH:MM start time and a location', async () => {
-      await service.create({ ...base, startTime: '18:30', location: 'Beach Court 2' });
+      await service.create({ ...base, startTime: '18:30', location: 'Beach Court 2' }, CURRENT_USER);
 
       const args = (prisma.ongoingEvent.create as jest.Mock).mock.calls[0][0];
       expect(args.data.startTime).toBe('18:30');
@@ -1703,7 +1850,7 @@ describe('OngoingService', () => {
     });
 
     it('accepts a tournament with neither field', async () => {
-      await service.create(base);
+      await service.create(base, CURRENT_USER);
 
       const args = (prisma.ongoingEvent.create as jest.Mock).mock.calls[0][0];
       expect(args.data.startTime).toBeNull();
@@ -1711,35 +1858,35 @@ describe('OngoingService', () => {
     });
 
     it('accepts midnight and the last minute of the day', async () => {
-      await service.create({ ...base, startTime: '00:00' });
-      await service.create({ ...base, startTime: '23:59' });
+      await service.create({ ...base, startTime: '00:00' }, CURRENT_USER);
+      await service.create({ ...base, startTime: '23:59' }, CURRENT_USER);
 
       expect(prisma.ongoingEvent.create).toHaveBeenCalledTimes(2);
     });
 
     it('rejects a malformed start time', async () => {
       for (const bad of ['24:00', '18:60', '6:30', '1830', 'evening', '18:30:00']) {
-        await expect(service.create({ ...base, startTime: bad })).rejects.toThrow(
+        await expect(service.create({ ...base, startTime: bad }, CURRENT_USER)).rejects.toThrow(
           new BadRequestException('startTime must be in HH:MM 24-hour format'),
         );
       }
     });
 
     it('rejects a non-string location', async () => {
-      await expect(service.create({ ...base, location: 42 as any })).rejects.toThrow(
+      await expect(service.create({ ...base, location: 42 as any }, CURRENT_USER)).rejects.toThrow(
         new BadRequestException('location must be a string'),
       );
     });
 
     it('trims the location and treats an empty one as absent', async () => {
-      await service.create({ ...base, location: '   ' });
+      await service.create({ ...base, location: '   ' }, CURRENT_USER);
 
       const args = (prisma.ongoingEvent.create as jest.Mock).mock.calls[0][0];
       expect(args.data.location).toBeNull();
     });
 
     it('creates nothing when the start time is malformed', async () => {
-      await expect(service.create({ ...base, startTime: 'nope' })).rejects.toThrow(BadRequestException);
+      await expect(service.create({ ...base, startTime: 'nope' }, CURRENT_USER)).rejects.toThrow(BadRequestException);
       expect(prisma.ongoingEvent.create).not.toHaveBeenCalled();
     });
   });
@@ -1822,7 +1969,7 @@ describe('OngoingService', () => {
 
   describe('OngoingService.updateConfig maxTeams', () => {
     it('rejects a maxTeams below two', async () => {
-      await expect(service.updateConfig('event-1', { gamesPerPair: 1, courts: 1, maxTeams: 1 })).rejects.toThrow(
+      await expect(service.updateConfig('event-1', { gamesPerPair: 1, courts: 1, maxTeams: 1 }, CURRENT_USER)).rejects.toThrow(
         new BadRequestException('maxTeams must be at least 2'),
       );
     });
@@ -1840,13 +1987,13 @@ describe('OngoingService', () => {
           } as any),
       );
 
-      await expect(service.updateConfig('event-1', { gamesPerPair: 1, courts: 1, maxTeams: 2 })).rejects.toThrow(
+      await expect(service.updateConfig('event-1', { gamesPerPair: 1, courts: 1, maxTeams: 2 }, CURRENT_USER)).rejects.toThrow(
         new BadRequestException('maxTeams cannot be lower than the number of registered teams'),
       );
     });
 
     it('accepts an absent maxTeams as unlimited', async () => {
-      await service.updateConfig('event-1', { gamesPerPair: 1, courts: 1 });
+      await service.updateConfig('event-1', { gamesPerPair: 1, courts: 1 }, CURRENT_USER);
 
       const args = (prisma.ongoingEventConfig.upsert as jest.Mock).mock.calls[0][0];
       expect(args.update.maxTeams).toBeNull();
@@ -1856,7 +2003,7 @@ describe('OngoingService', () => {
   describe('OngoingService.updateConfig scheme and groups', () => {
     it('rejects an unknown scheme', async () => {
       await expect(
-        service.updateConfig('event-1', { gamesPerPair: 1, courts: 1, scheme: 'ladder' } as any),
+        service.updateConfig('event-1', { gamesPerPair: 1, courts: 1, scheme: 'ladder' } as any, CURRENT_USER),
       ).rejects.toThrow(new BadRequestException('scheme must be roundRobin or groupsPlayoff'));
     });
 
@@ -1867,7 +2014,7 @@ describe('OngoingService', () => {
         scheme: 'roundRobin',
         groupCount: 3,
         qualifiersPerGroup: 2,
-      } as any);
+      } as any, CURRENT_USER);
 
       const args = (prisma.ongoingEventConfig.upsert as jest.Mock).mock.calls[0][0];
       expect(args.update.groupCount).toBe(1);
@@ -1882,7 +2029,7 @@ describe('OngoingService', () => {
           scheme: 'groupsPlayoff',
           groupCount: 0,
           qualifiersPerGroup: 2,
-        } as any),
+        } as any, CURRENT_USER),
       ).rejects.toThrow(new BadRequestException('groupsPlayoff needs at least 1 group'));
     });
 
@@ -1893,7 +2040,7 @@ describe('OngoingService', () => {
         scheme: 'groupsPlayoff',
         groupCount: 1,
         qualifiersPerGroup: 4,
-      } as any);
+      } as any, CURRENT_USER);
 
       const args = (prisma.ongoingEventConfig.upsert as jest.Mock).mock.calls[0][0];
       expect(args.update.scheme).toBe('groupsPlayoff');
@@ -1909,7 +2056,7 @@ describe('OngoingService', () => {
           scheme: 'groupsPlayoff',
           groupCount: 3,
           qualifiersPerGroup: 3,
-        } as any),
+        } as any, CURRENT_USER),
       ).rejects.toThrow(new BadRequestException('groupCount times qualifiersPerGroup must be a power of two'));
     });
 
@@ -1920,7 +2067,7 @@ describe('OngoingService', () => {
         scheme: 'groupsPlayoff',
         groupCount: 2,
         qualifiersPerGroup: 2,
-      } as any);
+      } as any, CURRENT_USER);
 
       const args = (prisma.ongoingEventConfig.upsert as jest.Mock).mock.calls[0][0];
       expect(args.update.scheme).toBe('groupsPlayoff');
@@ -1935,7 +2082,7 @@ describe('OngoingService', () => {
         scheme: 'groupsPlayoff',
         groupCount: 2,
         qualifiersPerGroup: 4,
-      } as any);
+      } as any, CURRENT_USER);
 
       expect(prisma.ongoingEventConfig.upsert).toHaveBeenCalled();
     });
@@ -1966,7 +2113,7 @@ describe('OngoingService', () => {
           } as any),
       );
 
-      await service.generateSchedule('event-1');
+      await service.generateSchedule('event-1', CURRENT_USER);
 
       expect(prisma.ongoingTeam.update).toHaveBeenCalledTimes(8);
       const indices = (prisma.ongoingTeam.update as jest.Mock).mock.calls.map((c) => c[0].data.groupIndex);
@@ -1991,7 +2138,7 @@ describe('OngoingService', () => {
           } as any),
       );
 
-      await service.generateSchedule('event-1');
+      await service.generateSchedule('event-1', CURRENT_USER);
 
       const groupOf = new Map<string, number>();
       for (const call of (prisma.ongoingTeam.update as jest.Mock).mock.calls) {
@@ -2021,7 +2168,7 @@ describe('OngoingService', () => {
           } as any),
       );
 
-      await service.generateSchedule('event-1');
+      await service.generateSchedule('event-1', CURRENT_USER);
 
       expect((prisma.ongoingGame.createMany as jest.Mock).mock.calls[0][0].data).toHaveLength(6);
     });
@@ -2043,7 +2190,7 @@ describe('OngoingService', () => {
           } as any),
       );
 
-      await expect(service.generateSchedule('event-1')).rejects.toThrow(BadRequestException);
+      await expect(service.generateSchedule('event-1', CURRENT_USER)).rejects.toThrow(BadRequestException);
       expect(prisma.ongoingGame.createMany).not.toHaveBeenCalled();
     });
   });
@@ -2121,7 +2268,7 @@ describe('OngoingService', () => {
           } as any),
       );
 
-      await expect(service.generatePlayoff('event-1')).rejects.toThrow(
+      await expect(service.generatePlayoff('event-1', CURRENT_USER)).rejects.toThrow(
         new BadRequestException('The playoff is only available for the groupsPlayoff scheme'),
       );
       expect(prisma.ongoingGame.createMany).not.toHaveBeenCalled();
@@ -2130,7 +2277,7 @@ describe('OngoingService', () => {
     it('refuses when the tournament has no group games at all', async () => {
       prisma.ongoingEvent.findUnique = jest.fn(async () => ({ ...GROUPS_PLAYOFF_EVENT, games: [] } as any));
 
-      await expect(service.generatePlayoff('event-1')).rejects.toThrow(
+      await expect(service.generatePlayoff('event-1', CURRENT_USER)).rejects.toThrow(
         new ConflictException('The group stage has not been scheduled yet'),
       );
       expect(prisma.ongoingGame.createMany).not.toHaveBeenCalled();
@@ -2145,7 +2292,7 @@ describe('OngoingService', () => {
           } as any),
       );
 
-      await expect(service.generatePlayoff('event-1')).rejects.toThrow(
+      await expect(service.generatePlayoff('event-1', CURRENT_USER)).rejects.toThrow(
         new ConflictException('Every group game must have a result before the playoff can be generated'),
       );
       expect(prisma.ongoingGame.createMany).not.toHaveBeenCalled();
@@ -2176,14 +2323,14 @@ describe('OngoingService', () => {
           } as any),
       );
 
-      await expect(service.generatePlayoff('event-1')).rejects.toThrow(
+      await expect(service.generatePlayoff('event-1', CURRENT_USER)).rejects.toThrow(
         new ConflictException('The playoff already exists; delete it first before generating a new one'),
       );
       expect(prisma.ongoingGame.createMany).not.toHaveBeenCalled();
     });
 
     it('writes log2(groupCount x qualifiersPerGroup) rounds plus a 3rd-place row, round 1 full and the rest empty', async () => {
-      await service.generatePlayoff('event-1');
+      await service.generatePlayoff('event-1', CURRENT_USER);
 
       const data = (prisma.ongoingGame.createMany as jest.Mock).mock.calls[0][0].data;
       // 2 groups x 2 qualifiers = a 4-team bracket: round 1 has 2 games, round 2 (the final) has 1,
@@ -2223,7 +2370,7 @@ describe('OngoingService', () => {
     });
 
     it('does not mark any normal bracket row as the 3rd-place row', async () => {
-      await service.generatePlayoff('event-1');
+      await service.generatePlayoff('event-1', CURRENT_USER);
 
       const data = (prisma.ongoingGame.createMany as jest.Mock).mock.calls[0][0].data;
       const normalRows = data.filter((row: any) => row.bracketRound !== null);
@@ -2233,7 +2380,7 @@ describe('OngoingService', () => {
     });
 
     it('seeds from the group standings, not registration order', async () => {
-      await service.generatePlayoff('event-1');
+      await service.generatePlayoff('event-1', CURRENT_USER);
 
       const data = (prisma.ongoingGame.createMany as jest.Mock).mock.calls[0][0].data;
       const round1 = data.filter((row: any) => row.bracketRound === 1);
@@ -2255,7 +2402,7 @@ describe('OngoingService', () => {
           } as any),
       );
 
-      await expect(service.generatePlayoff('event-1')).rejects.toThrow(
+      await expect(service.generatePlayoff('event-1', CURRENT_USER)).rejects.toThrow(
         new BadRequestException('Group 2 has 1 ranked team(s), fewer than the 2 qualifiersPerGroup configured'),
       );
       expect(prisma.ongoingGame.createMany).not.toHaveBeenCalled();
@@ -2322,7 +2469,7 @@ describe('OngoingService', () => {
     });
 
     it('seeds 1st vs 4th and 2nd vs 3rd off the single table, leaving 5th out entirely', async () => {
-      await service.generatePlayoff('event-1');
+      await service.generatePlayoff('event-1', CURRENT_USER);
 
       const data = (prisma.ongoingGame.createMany as jest.Mock).mock.calls[0][0].data;
       expect(data).toHaveLength(4); // a 4-team bracket: 2 semifinals + 1 final + 1 3rd-place row
@@ -2388,7 +2535,7 @@ describe('OngoingService', () => {
     });
 
     it('generates only the final, with no 3rd-place row', async () => {
-      await service.generatePlayoff('event-1');
+      await service.generatePlayoff('event-1', CURRENT_USER);
 
       const data = (prisma.ongoingGame.createMany as jest.Mock).mock.calls[0][0].data;
       expect(data).toHaveLength(1);
@@ -2441,7 +2588,7 @@ describe('OngoingService', () => {
           } as any),
       );
 
-      await expect(service.finishTournament('event-1')).rejects.toThrow(ConflictException);
+      await expect(service.finishTournament('event-1', CURRENT_USER)).rejects.toThrow(ConflictException);
       expect(prisma.ongoingEvent.update).not.toHaveBeenCalled();
     });
 
@@ -2458,7 +2605,7 @@ describe('OngoingService', () => {
           } as any),
       );
 
-      await expect(service.finishTournament('event-1')).rejects.toThrow(ConflictException);
+      await expect(service.finishTournament('event-1', CURRENT_USER)).rejects.toThrow(ConflictException);
       expect(prisma.ongoingEvent.update).not.toHaveBeenCalled();
     });
 
@@ -2475,7 +2622,7 @@ describe('OngoingService', () => {
           } as any),
       );
 
-      await service.finishTournament('event-1');
+      await service.finishTournament('event-1', CURRENT_USER);
 
       expect(prisma.ongoingEvent.update).toHaveBeenCalledWith({
         where: { id: 'event-1' },
@@ -2493,7 +2640,7 @@ describe('OngoingService', () => {
           } as any),
       );
 
-      await service.finishTournament('event-1');
+      await service.finishTournament('event-1', CURRENT_USER);
 
       expect(prisma.ongoingEvent.update).toHaveBeenCalledWith({
         where: { id: 'event-1' },
@@ -2506,7 +2653,7 @@ describe('OngoingService', () => {
         async () => ({ ...EVENT_ROW, config: { scheme: 'roundRobin', groupCount: 1 }, games: [] } as any),
       );
 
-      await expect(service.finishTournament('event-1')).rejects.toThrow(ConflictException);
+      await expect(service.finishTournament('event-1', CURRENT_USER)).rejects.toThrow(ConflictException);
       expect(prisma.ongoingEvent.update).not.toHaveBeenCalled();
     });
 
@@ -2520,7 +2667,7 @@ describe('OngoingService', () => {
           } as any),
       );
 
-      await expect(service.finishTournament('event-1')).rejects.toThrow(ConflictException);
+      await expect(service.finishTournament('event-1', CURRENT_USER)).rejects.toThrow(ConflictException);
       expect(prisma.ongoingEvent.update).not.toHaveBeenCalled();
     });
 
@@ -2534,7 +2681,7 @@ describe('OngoingService', () => {
           } as any),
       );
 
-      await service.finishTournament('event-1');
+      await service.finishTournament('event-1', CURRENT_USER);
 
       expect(prisma.ongoingEvent.update).toHaveBeenCalledWith({
         where: { id: 'event-1' },
@@ -2545,14 +2692,14 @@ describe('OngoingService', () => {
     it('throws a 404 rather than finishing when the event is missing', async () => {
       prisma.ongoingEvent.findUnique = jest.fn(async () => null as any);
 
-      await expect(service.finishTournament('missing')).rejects.toThrow(NotFoundException);
+      await expect(service.finishTournament('missing', CURRENT_USER)).rejects.toThrow(NotFoundException);
       expect(prisma.ongoingEvent.update).not.toHaveBeenCalled();
     });
   });
 
   describe('OngoingService.deletePlayoff', () => {
     it('removes only phase playoff games and leaves group games untouched', async () => {
-      await service.deletePlayoff('event-1');
+      await service.deletePlayoff('event-1', CURRENT_USER);
 
       expect(prisma.ongoingGame.deleteMany).toHaveBeenCalledWith({
         where: { eventId: 'event-1', phase: 'playoff' },
@@ -2562,7 +2709,7 @@ describe('OngoingService', () => {
     it('throws a 404 rather than deleting when the event is missing', async () => {
       prisma.ongoingEvent.findUnique = jest.fn(async () => null as any);
 
-      await expect(service.deletePlayoff('missing')).rejects.toThrow(NotFoundException);
+      await expect(service.deletePlayoff('missing', CURRENT_USER)).rejects.toThrow(NotFoundException);
       expect(prisma.ongoingGame.deleteMany).not.toHaveBeenCalled();
     });
   });

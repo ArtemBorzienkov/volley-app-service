@@ -1,5 +1,13 @@
-import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { UserService } from '../user/user.service';
+import { JwtPayload } from '../auth-guards';
 import { CreateOngoingEventDto } from './dto/create-ongoing-event.dto';
 import { UpdateOngoingConfigDto } from './dto/update-ongoing-config.dto';
 import { SetOngoingTeamsDto } from './dto/set-ongoing-teams.dto';
@@ -51,7 +59,7 @@ export function isGamePlayed(game: { team1Points: number | null; team2Points: nu
 
 @Injectable()
 export class OngoingService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private userService: UserService) {}
 
   async findAll(): Promise<OngoingEventListItemDto[]> {
     const events = await this.prisma.ongoingEvent.findMany({
@@ -66,13 +74,17 @@ export class OngoingService {
       date: event.date,
       startTime: event.startTime,
       location: event.location,
+      createdByUserId: event.createdByUserId,
       teamsCount: event.teams.length,
       gamesCount: event.games.length,
       playedCount: event.games.filter((game) => isGamePlayed(game)).length,
     }));
   }
 
-  async create(createOngoingEventDto: CreateOngoingEventDto): Promise<OngoingEventResponseDto> {
+  async create(
+    createOngoingEventDto: CreateOngoingEventDto,
+    currentUser: JwtPayload,
+  ): Promise<OngoingEventResponseDto> {
     // No ValidationPipe is registered in this service, so the DTO decorators never run — validate here as the siblings do.
     if (!createOngoingEventDto) {
       throw new BadRequestException('name and date are required');
@@ -115,6 +127,7 @@ export class OngoingService {
       date: parsedDate,
       startTime,
       location,
+      createdByUserId: currentUser.sub,
       config: { create: { gamesPerPair: 1, courts: 1, maxTeams, scheme, groupCount, qualifiersPerGroup } },
     };
 
@@ -133,12 +146,17 @@ export class OngoingService {
     return this.loadEvent(id);
   }
 
-  async remove(id: string): Promise<void> {
-    await this.loadEvent(id);
+  async remove(id: string, currentUser: JwtPayload): Promise<void> {
+    const event = await this.loadEvent(id);
+    this.assertCanManage(event.createdByUserId, currentUser);
     await this.prisma.ongoingEvent.delete({ where: { id } });
   }
 
-  async updateConfig(id: string, updateOngoingConfigDto: UpdateOngoingConfigDto): Promise<OngoingEventResponseDto> {
+  async updateConfig(
+    id: string,
+    updateOngoingConfigDto: UpdateOngoingConfigDto,
+    currentUser: JwtPayload,
+  ): Promise<OngoingEventResponseDto> {
     if (!updateOngoingConfigDto) {
       throw new BadRequestException('gamesPerPair and courts are required');
     }
@@ -153,6 +171,7 @@ export class OngoingService {
     }
 
     const event = await this.loadEvent(id);
+    this.assertCanManage(event.createdByUserId, currentUser);
     const maxTeams = this.normaliseMaxTeams(updateOngoingConfigDto.maxTeams, event.teams.length);
     const { scheme, groupCount, qualifiersPerGroup } = this.normaliseScheme(
       updateOngoingConfigDto.scheme,
@@ -169,8 +188,13 @@ export class OngoingService {
     return this.loadEvent(id);
   }
 
-  async setTeams(id: string, setOngoingTeamsDto: SetOngoingTeamsDto): Promise<OngoingEventResponseDto> {
-    await this.loadEvent(id);
+  async setTeams(
+    id: string,
+    setOngoingTeamsDto: SetOngoingTeamsDto,
+    currentUser: JwtPayload,
+  ): Promise<OngoingEventResponseDto> {
+    const event = await this.loadEvent(id);
+    this.assertCanManage(event.createdByUserId, currentUser);
 
     if (!setOngoingTeamsDto || !Array.isArray(setOngoingTeamsDto.teams)) {
       throw new BadRequestException('teams must be an array');
@@ -197,7 +221,11 @@ export class OngoingService {
     return this.loadEvent(id);
   }
 
-  async addTeam(id: string, addOngoingTeamDto: AddOngoingTeamDto): Promise<OngoingEventResponseDto> {
+  async addTeam(
+    id: string,
+    addOngoingTeamDto: AddOngoingTeamDto,
+    currentUser: JwtPayload,
+  ): Promise<OngoingEventResponseDto> {
     const event = await this.loadEvent(id);
 
     if (!addOngoingTeamDto) {
@@ -205,6 +233,14 @@ export class OngoingService {
     }
 
     const { player1Id, player2Id } = addOngoingTeamDto;
+
+    const currentUserRecord = await this.userService.findById(currentUser.sub);
+    if (
+      !currentUserRecord?.playerId ||
+      (currentUserRecord.playerId !== player1Id && currentUserRecord.playerId !== player2Id)
+    ) {
+      throw new BadRequestException('You must register yourself as one of the two players');
+    }
 
     // Validate the newcomer against the whole roster at once, so "already in another team" covers
     // both the incoming pair and everyone registered before it.
@@ -262,13 +298,14 @@ export class OngoingService {
     return open;
   }
 
-  async removeTeam(teamId: string): Promise<OngoingEventResponseDto> {
+  async removeTeam(teamId: string, currentUser: JwtPayload): Promise<OngoingEventResponseDto> {
     const team = await this.prisma.ongoingTeam.findUnique({ where: { id: teamId } });
 
     if (!team) {
       throw new NotFoundException(`Ongoing team with ID ${teamId} not found`);
     }
 
+    await this.assertCanManageEvent(team.eventId, currentUser);
     await this.assertPlanning(team.eventId);
 
     // ongoing_games -> ongoing_teams is ON DELETE CASCADE, and in planning every fixture is unplayed,
@@ -291,8 +328,9 @@ export class OngoingService {
     return eventDay >= today;
   }
 
-  async generateSchedule(id: string): Promise<OngoingEventResponseDto> {
+  async generateSchedule(id: string, currentUser: JwtPayload): Promise<OngoingEventResponseDto> {
     const event = await this.loadEvent(id);
+    this.assertCanManage(event.createdByUserId, currentUser);
 
     if (event.teams.length < 2) {
       throw new BadRequestException('At least two teams are required to generate a schedule');
@@ -347,8 +385,9 @@ export class OngoingService {
     return this.loadEvent(id);
   }
 
-  async generatePlayoff(id: string): Promise<OngoingEventResponseDto> {
+  async generatePlayoff(id: string, currentUser: JwtPayload): Promise<OngoingEventResponseDto> {
     const event = await this.loadEvent(id);
+    this.assertCanManage(event.createdByUserId, currentUser);
 
     if (event.config.scheme !== 'groupsPlayoff') {
       throw new BadRequestException('The playoff is only available for the groupsPlayoff scheme');
@@ -435,8 +474,9 @@ export class OngoingService {
     return this.loadEvent(id);
   }
 
-  async deletePlayoff(id: string): Promise<OngoingEventResponseDto> {
-    await this.loadEvent(id);
+  async deletePlayoff(id: string, currentUser: JwtPayload): Promise<OngoingEventResponseDto> {
+    const event = await this.loadEvent(id);
+    this.assertCanManage(event.createdByUserId, currentUser);
     await this.prisma.ongoingGame.deleteMany({ where: { eventId: id, phase: 'playoff' } });
 
     return this.loadEvent(id);
@@ -447,8 +487,9 @@ export class OngoingService {
   // played game (see findOpen's hasResult check) — this never deletes or locks anything, mirroring
   // the frontend's own "Finish tournament" gate so a caller can't bypass that gate by hitting the
   // API directly.
-  async finishTournament(id: string): Promise<OngoingEventResponseDto> {
+  async finishTournament(id: string, currentUser: JwtPayload): Promise<OngoingEventResponseDto> {
     const event = await this.loadEvent(id);
+    this.assertCanManage(event.createdByUserId, currentUser);
     this.assertTournamentComplete(event);
 
     await this.prisma.ongoingEvent.update({ where: { id }, data: { finishedAt: new Date() } });
@@ -486,8 +527,10 @@ export class OngoingService {
   async updateGameScore(
     gameId: string,
     updateOngoingGameScoreDto: UpdateOngoingGameScoreDto,
+    currentUser: JwtPayload,
   ): Promise<OngoingGameResponseDto> {
     const game = await this.loadGame(gameId);
+    await this.assertCanManageEvent(game.eventId, currentUser);
 
     // Nest always delivers {} for an empty HTTP body; this guards direct service invocation only, mirroring updateConfig/setTeams.
     if (!updateOngoingGameScoreDto) {
@@ -550,8 +593,9 @@ export class OngoingService {
     });
   }
 
-  async clearGameResult(gameId: string): Promise<OngoingGameResponseDto> {
+  async clearGameResult(gameId: string, currentUser: JwtPayload): Promise<OngoingGameResponseDto> {
     const game = await this.loadGame(gameId);
+    await this.assertCanManageEvent(game.eventId, currentUser);
 
     // Rule 3: same lock as updateGameScore — a group result cannot move once the playoff exists.
     if (game.phase === 'group') {
@@ -733,6 +777,22 @@ export class OngoingService {
     return value.trim() || null;
   }
 
+  private assertCanManage(createdByUserId: string | null, currentUser: JwtPayload): void {
+    const isCreator = createdByUserId !== null && createdByUserId === currentUser.sub;
+    const isAdmin = currentUser.role === 'admin';
+    if (!isCreator && !isAdmin) {
+      throw new ForbiddenException('Only the tournament creator or an admin can do this');
+    }
+  }
+
+  private async assertCanManageEvent(eventId: string, currentUser: JwtPayload): Promise<void> {
+    const event = await this.prisma.ongoingEvent.findUnique({
+      where: { id: eventId },
+      select: { createdByUserId: true },
+    });
+    this.assertCanManage(event?.createdByUserId ?? null, currentUser);
+  }
+
   private validateTeamPairs(pairs: Array<{ player1Id: string; player2Id: string }>): string[] {
     const seen = new Set<string>();
 
@@ -810,6 +870,7 @@ export class OngoingService {
       finishedAt: event.finishedAt ?? null,
       createdAt: event.createdAt,
       updatedAt: event.updatedAt,
+      createdByUserId: event.createdByUserId ?? null,
       config: {
         gamesPerPair: event.config ? event.config.gamesPerPair : 1,
         courts: event.config ? event.config.courts : 1,

@@ -36,6 +36,8 @@ model Player {
   // Relations - ongoing tournament teams
   ongoingTeamsAsPlayer1 OngoingTeam[]    @relation("OngoingTeamPlayer1")
   ongoingTeamsAsPlayer2 OngoingTeam[]    @relation("OngoingTeamPlayer2")
+  // Relations - auth account linked to this player (optional, 1:1)
+  user User?
 
   @@index([tgId])
   @@map("players")
@@ -146,6 +148,9 @@ model OngoingEvent {
   createdAt  DateTime  @default(now()) @map("created_at")
   updatedAt  DateTime  @updatedAt @map("updated_at")
 
+  createdByUserId String? @map("created_by_user_id")
+  createdByUser   User?   @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
   config OngoingEventConfig?
   teams  OngoingTeam[]
   games  OngoingGame[]
@@ -211,4 +216,20 @@ model OngoingGame {
 
   @@index([eventId])
   @@map("ongoing_games")
+}
+
+model User {
+  id        String    @id @default(uuid())
+  email     String    @unique
+  name      String
+  password  String
+  role      String    @default("player") // 'admin' | 'player', enforced in application code
+  playerId  String?   @unique @map("player_id")
+  lastVisit DateTime? @map("last_visit")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  player               Player?        @relation(fields: [playerId], references: [id], onDelete: SetNull)
+  ongoingEventsCreated OngoingEvent[]
+
+  @@map("users")
 }
