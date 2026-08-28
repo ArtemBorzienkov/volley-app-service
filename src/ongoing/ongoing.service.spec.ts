@@ -10,8 +10,9 @@ const EVENT_ROW = {
   date: new Date('2026-08-23T10:00:00.000Z'),
   createdAt: new Date('2026-08-23T09:00:00.000Z'),
   updatedAt: new Date('2026-08-23T09:00:00.000Z'),
-  config: { gamesPerPair: 1, courts: 2 },
+  config: { gamesPerPair: 1, courts: 2, visibility: 'public', allowSoloRegistration: false },
   teams: [],
+  soloPlayers: [],
   games: [],
 };
 
@@ -46,6 +47,14 @@ function buildPrismaMock() {
       // round", so tests that don't care about the 3rd-place match keep seeing exactly one successor.
       aggregate: jest.fn(async () => ({ _max: { bracketRound: null } })),
     },
+    ongoingSoloPlayer: {
+      create: jest.fn(async () => ({ id: 'solo-1' })),
+      createMany: jest.fn(async () => ({ count: 0 })),
+      deleteMany: jest.fn(async () => ({ count: 0 })),
+      findUnique: jest.fn(async () => null as any),
+      findMany: jest.fn(async () => []),
+      delete: jest.fn(async () => ({})),
+    },
     player: {
       findMany: jest.fn(async () => []),
     },
@@ -63,7 +72,7 @@ describe('OngoingService', () => {
   beforeEach(async () => {
     prisma = buildPrismaMock();
     prisma.$transaction = jest.fn(async (cb: any) => cb(prisma));
-    userService = { findById: jest.fn(async () => ({ playerId: 'p3' }) as any) };
+    userService = { findById: jest.fn(async () => ({ playerId: 'p3' } as any)) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -95,6 +104,8 @@ describe('OngoingService', () => {
               scheme: 'roundRobin',
               groupCount: 1,
               qualifiersPerGroup: null,
+              visibility: 'public',
+              allowSoloRegistration: false,
             },
           },
         },
@@ -141,6 +152,8 @@ describe('OngoingService', () => {
       expect(result.config).toEqual({
         gamesPerPair: 1,
         courts: 2,
+        visibility: 'public',
+        allowSoloRegistration: false,
         maxTeams: null,
         scheme: 'roundRobin',
         groupCount: 1,
@@ -199,6 +212,8 @@ describe('OngoingService', () => {
           scheme: 'roundRobin',
           groupCount: 1,
           qualifiersPerGroup: null,
+          visibility: 'public',
+          allowSoloRegistration: false,
         },
         update: {
           gamesPerPair: 2,
@@ -207,6 +222,8 @@ describe('OngoingService', () => {
           scheme: 'roundRobin',
           groupCount: 1,
           qualifiersPerGroup: null,
+          visibility: 'public',
+          allowSoloRegistration: false,
         },
       });
     });
@@ -224,28 +241,32 @@ describe('OngoingService', () => {
     });
 
     it('rejects a team whose two players are the same person', async () => {
-      await expect(service.setTeams('event-1', { teams: [{ player1Id: 'p1', player2Id: 'p1' }] }, CURRENT_USER)).rejects.toThrow(
-        new BadRequestException('A team must have two different players'),
-      );
+      await expect(
+        service.setTeams('event-1', { teams: [{ player1Id: 'p1', player2Id: 'p1' }] }, CURRENT_USER),
+      ).rejects.toThrow(new BadRequestException('A team must have two different players'));
     });
 
     it('rejects a player appearing in more than one team', async () => {
       await expect(
-        service.setTeams('event-1', {
-          teams: [
-            { player1Id: 'p1', player2Id: 'p2' },
-            { player1Id: 'p1', player2Id: 'p3' },
-          ],
-        }, CURRENT_USER),
+        service.setTeams(
+          'event-1',
+          {
+            teams: [
+              { player1Id: 'p1', player2Id: 'p2' },
+              { player1Id: 'p1', player2Id: 'p3' },
+            ],
+          },
+          CURRENT_USER,
+        ),
       ).rejects.toThrow(new BadRequestException('Player p1 is already in another team'));
     });
 
     it('rejects an unknown player id', async () => {
       prisma.player.findMany = jest.fn(async () => [{ id: 'p1' }] as any);
 
-      await expect(service.setTeams('event-1', { teams: [{ player1Id: 'p1', player2Id: 'ghost' }] }, CURRENT_USER)).rejects.toThrow(
-        new NotFoundException('Player with ID ghost not found'),
-      );
+      await expect(
+        service.setTeams('event-1', { teams: [{ player1Id: 'p1', player2Id: 'ghost' }] }, CURRENT_USER),
+      ).rejects.toThrow(new NotFoundException('Player with ID ghost not found'));
     });
 
     it('drops the existing games before replacing the roster, since fixtures would dangle', async () => {
@@ -269,12 +290,16 @@ describe('OngoingService', () => {
     });
 
     it('writes each team with the event id attached', async () => {
-      await service.setTeams('event-1', {
-        teams: [
-          { player1Id: 'p1', player2Id: 'p2' },
-          { player1Id: 'p3', player2Id: 'p4' },
-        ],
-      }, CURRENT_USER);
+      await service.setTeams(
+        'event-1',
+        {
+          teams: [
+            { player1Id: 'p1', player2Id: 'p2' },
+            { player1Id: 'p3', player2Id: 'p4' },
+          ],
+        },
+        CURRENT_USER,
+      );
 
       expect(prisma.ongoingTeam.createMany).toHaveBeenCalledWith({
         data: [
@@ -314,9 +339,9 @@ describe('OngoingService', () => {
     it('refuses to replace the roster once any match has a result', async () => {
       prisma.ongoingGame.count = jest.fn(async () => 1);
 
-      await expect(service.setTeams('event-1', { teams: [{ player1Id: 'p1', player2Id: 'p2' }] }, CURRENT_USER)).rejects.toThrow(
-        new ConflictException('The tournament has already started; its roster is locked'),
-      );
+      await expect(
+        service.setTeams('event-1', { teams: [{ player1Id: 'p1', player2Id: 'p2' }] }, CURRENT_USER),
+      ).rejects.toThrow(new ConflictException('The tournament has already started; its roster is locked'));
     });
 
     it('counts only games that carry a result when deciding whether the tournament started', async () => {
@@ -437,27 +462,27 @@ describe('OngoingService', () => {
     it('throws a 404 naming the id when the game does not exist', async () => {
       prisma.ongoingGame.findUnique = jest.fn(async () => null as any);
 
-      await expect(service.updateGameScore('missing', { team1Points: 15, team2Points: 7 }, CURRENT_USER)).rejects.toThrow(
-        new NotFoundException('Ongoing game with ID missing not found'),
-      );
+      await expect(
+        service.updateGameScore('missing', { team1Points: 15, team2Points: 7 }, CURRENT_USER),
+      ).rejects.toThrow(new NotFoundException('Ongoing game with ID missing not found'));
     });
 
     it('rejects a negative score', async () => {
-      await expect(service.updateGameScore('game-1', { team1Points: -1, team2Points: 7 }, CURRENT_USER)).rejects.toThrow(
-        new BadRequestException('Points must be whole numbers of 0 or more'),
-      );
+      await expect(
+        service.updateGameScore('game-1', { team1Points: -1, team2Points: 7 }, CURRENT_USER),
+      ).rejects.toThrow(new BadRequestException('Points must be whole numbers of 0 or more'));
     });
 
     it('rejects a non-integer score', async () => {
-      await expect(service.updateGameScore('game-1', { team1Points: 15.5, team2Points: 7 }, CURRENT_USER)).rejects.toThrow(
-        new BadRequestException('Points must be whole numbers of 0 or more'),
-      );
+      await expect(
+        service.updateGameScore('game-1', { team1Points: 15.5, team2Points: 7 }, CURRENT_USER),
+      ).rejects.toThrow(new BadRequestException('Points must be whole numbers of 0 or more'));
     });
 
     it('rejects a draw, because a set always has a winner', async () => {
-      await expect(service.updateGameScore('game-1', { team1Points: 15, team2Points: 15 }, CURRENT_USER)).rejects.toThrow(
-        new BadRequestException('A set cannot end in a draw'),
-      );
+      await expect(
+        service.updateGameScore('game-1', { team1Points: 15, team2Points: 15 }, CURRENT_USER),
+      ).rejects.toThrow(new BadRequestException('A set cannot end in a draw'));
     });
 
     it('stores both scores on the game', async () => {
@@ -478,15 +503,15 @@ describe('OngoingService', () => {
     });
 
     it('rejects a string score instead of throwing a raw TypeError', async () => {
-      await expect(service.updateGameScore('game-1', { team1Points: '15' as any, team2Points: 7 }, CURRENT_USER)).rejects.toThrow(
-        new BadRequestException('Points must be whole numbers of 0 or more'),
-      );
+      await expect(
+        service.updateGameScore('game-1', { team1Points: '15' as any, team2Points: 7 }, CURRENT_USER),
+      ).rejects.toThrow(new BadRequestException('Points must be whole numbers of 0 or more'));
     });
 
     it('rejects a null score instead of throwing a raw TypeError', async () => {
-      await expect(service.updateGameScore('game-1', { team1Points: null as any, team2Points: 7 }, CURRENT_USER)).rejects.toThrow(
-        new BadRequestException('Points must be whole numbers of 0 or more'),
-      );
+      await expect(
+        service.updateGameScore('game-1', { team1Points: null as any, team2Points: 7 }, CURRENT_USER),
+      ).rejects.toThrow(new BadRequestException('Points must be whole numbers of 0 or more'));
     });
 
     it('rejects an absent team2Points instead of throwing a raw TypeError', async () => {
@@ -693,8 +718,12 @@ describe('OngoingService', () => {
       prisma.ongoingGame.findUnique = jest.fn(async () => groupGame() as any);
       prisma.ongoingGame.count = jest.fn(async () => 1);
 
-      await expect(service.updateGameScore('g-group-1', { team1Points: 15, team2Points: 10 }, CURRENT_USER)).rejects.toThrow(
-        new ConflictException('Group results are locked once the playoff has been generated; delete the playoff to edit them'),
+      await expect(
+        service.updateGameScore('g-group-1', { team1Points: 15, team2Points: 10 }, CURRENT_USER),
+      ).rejects.toThrow(
+        new ConflictException(
+          'Group results are locked once the playoff has been generated; delete the playoff to edit them',
+        ),
       );
       expect(prisma.ongoingGame.update).not.toHaveBeenCalled();
     });
@@ -704,7 +733,9 @@ describe('OngoingService', () => {
       prisma.ongoingGame.count = jest.fn(async () => 1);
 
       await expect(service.clearGameResult('g-group-1', CURRENT_USER)).rejects.toThrow(
-        new ConflictException('Group results are locked once the playoff has been generated; delete the playoff to edit them'),
+        new ConflictException(
+          'Group results are locked once the playoff has been generated; delete the playoff to edit them',
+        ),
       );
       expect(prisma.ongoingGame.update).not.toHaveBeenCalled();
     });
@@ -791,7 +822,9 @@ describe('OngoingService', () => {
     });
 
     it('advances the winner into the next round team2Id when the slot is odd', async () => {
-      prisma.ongoingGame.findUnique = jest.fn(async () => playoffGame({ bracketSlot: 1, team1Id: 't3', team2Id: 't4' }) as any);
+      prisma.ongoingGame.findUnique = jest.fn(
+        async () => playoffGame({ bracketSlot: 1, team1Id: 't3', team2Id: 't4' }) as any,
+      );
       prisma.ongoingGame.findFirst = jest.fn(async () => nextRoundGame({ bracketRound: 2, bracketSlot: 0 }) as any);
 
       await service.updateGameScore('g1', { team1Points: 10, team2Points: 15 }, CURRENT_USER);
@@ -839,7 +872,9 @@ describe('OngoingService', () => {
       prisma.ongoingGame.findUnique = jest.fn(async () => playoffGame({ bracketRound: 2, bracketSlot: 0 }) as any);
       prisma.ongoingGame.findFirst = jest.fn(async () => null as any);
 
-      await expect(service.updateGameScore('g1', { team1Points: 15, team2Points: 10 }, CURRENT_USER)).resolves.toBeDefined();
+      await expect(
+        service.updateGameScore('g1', { team1Points: 15, team2Points: 10 }, CURRENT_USER),
+      ).resolves.toBeDefined();
 
       expect(prisma.ongoingGame.findFirst).toHaveBeenCalledWith({
         where: { eventId: 'event-1', phase: 'playoff', bracketRound: 3, bracketSlot: 0 },
@@ -910,7 +945,9 @@ describe('OngoingService', () => {
       );
 
       await expect(service.clearGameResult('g1', CURRENT_USER)).rejects.toThrow(
-        new ConflictException("This game's winner has already advanced into a played later round; clear that result first"),
+        new ConflictException(
+          "This game's winner has already advanced into a played later round; clear that result first",
+        ),
       );
       expect(prisma.ongoingGame.update).not.toHaveBeenCalled();
     });
@@ -946,7 +983,9 @@ describe('OngoingService', () => {
     });
 
     it('clears a playoff result cleanly when it is the final (no next round exists)', async () => {
-      prisma.ongoingGame.findUnique = jest.fn(async () => playedPlayoffGame({ bracketRound: 2, bracketSlot: 0 }) as any);
+      prisma.ongoingGame.findUnique = jest.fn(
+        async () => playedPlayoffGame({ bracketRound: 2, bracketSlot: 0 }) as any,
+      );
       prisma.ongoingGame.findFirst = jest.fn(async () => null as any);
 
       const result = await service.clearGameResult('g1', CURRENT_USER);
@@ -1004,14 +1043,18 @@ describe('OngoingService', () => {
       prisma.ongoingGame.findUnique = jest.fn(async () => playedPlayoffGame() as any);
       prisma.ongoingGame.findFirst = jest.fn(async () => successor({ team1Points: 15, team2Points: 12 }) as any);
 
-      await expect(service.updateGameScore('g1', { team1Points: 10, team2Points: 15 }, CURRENT_USER)).rejects.toThrow(RULE_4);
+      await expect(service.updateGameScore('g1', { team1Points: 10, team2Points: 15 }, CURRENT_USER)).rejects.toThrow(
+        RULE_4,
+      );
     });
 
     it('writes nothing at all when it refuses, so the score and the bracket stay in agreement', async () => {
       prisma.ongoingGame.findUnique = jest.fn(async () => playedPlayoffGame() as any);
       prisma.ongoingGame.findFirst = jest.fn(async () => successor({ team1Points: 15, team2Points: 12 }) as any);
 
-      await expect(service.updateGameScore('g1', { team1Points: 10, team2Points: 15 }, CURRENT_USER)).rejects.toThrow(RULE_4);
+      await expect(service.updateGameScore('g1', { team1Points: 10, team2Points: 15 }, CURRENT_USER)).rejects.toThrow(
+        RULE_4,
+      );
       expect(prisma.ongoingGame.update).not.toHaveBeenCalled();
     });
 
@@ -1022,7 +1065,9 @@ describe('OngoingService', () => {
       // t1 still wins, so the successor's slot would not actually change — refused anyway, because
       // "undo the later round first" is a rule a caller can hold in their head; a same-winner
       // exception is not.
-      await expect(service.updateGameScore('g1', { team1Points: 21, team2Points: 3 }, CURRENT_USER)).rejects.toThrow(RULE_4);
+      await expect(service.updateGameScore('g1', { team1Points: 21, team2Points: 3 }, CURRENT_USER)).rejects.toThrow(
+        RULE_4,
+      );
       expect(prisma.ongoingGame.update).not.toHaveBeenCalled();
     });
 
@@ -1056,8 +1101,7 @@ describe('OngoingService', () => {
 
     it('does not apply rule 4 to group games, which have no successor geometry', async () => {
       prisma.ongoingGame.findUnique = jest.fn(
-        async () =>
-          playedPlayoffGame({ phase: 'group', bracketRound: null, bracketSlot: null, round: 1 }) as any,
+        async () => playedPlayoffGame({ phase: 'group', bracketRound: null, bracketSlot: null, round: 1 }) as any,
       );
       prisma.ongoingGame.findFirst = jest.fn(async () => null as any);
       prisma.ongoingGame.count = jest.fn(async () => 0);
@@ -1141,10 +1185,7 @@ describe('OngoingService', () => {
       prisma.ongoingGame.findUnique = jest.fn(
         async () => semifinal({ bracketSlot: 1, team1Id: 't3', team2Id: 't4' }) as any,
       );
-      prisma.ongoingGame.findFirst = routeFindFirst(
-        finalGame({ bracketSlot: 0 }),
-        thirdPlaceGame(),
-      );
+      prisma.ongoingGame.findFirst = routeFindFirst(finalGame({ bracketSlot: 0 }), thirdPlaceGame());
 
       await service.updateGameScore('g1', { team1Points: 10, team2Points: 15 }, CURRENT_USER);
 
@@ -1257,7 +1298,9 @@ describe('OngoingService', () => {
         thirdPlaceGame({ team1Points: 15, team2Points: 8 }), // played
       );
 
-      await expect(service.updateGameScore('g1', { team1Points: 10, team2Points: 15 }, CURRENT_USER)).rejects.toThrow(RULE_4);
+      await expect(service.updateGameScore('g1', { team1Points: 10, team2Points: 15 }, CURRENT_USER)).rejects.toThrow(
+        RULE_4,
+      );
       expect(prisma.ongoingGame.update).not.toHaveBeenCalled();
     });
 
@@ -1277,7 +1320,9 @@ describe('OngoingService', () => {
         thirdPlaceGame(), // still unplayed
       );
 
-      await expect(service.updateGameScore('g1', { team1Points: 10, team2Points: 15 }, CURRENT_USER)).rejects.toThrow(RULE_4);
+      await expect(service.updateGameScore('g1', { team1Points: 10, team2Points: 15 }, CURRENT_USER)).rejects.toThrow(
+        RULE_4,
+      );
       expect(prisma.ongoingGame.update).not.toHaveBeenCalled();
     });
 
@@ -1285,7 +1330,9 @@ describe('OngoingService', () => {
       prisma.ongoingGame.findUnique = jest.fn(async () => semifinal() as any);
       prisma.ongoingGame.findFirst = routeFindFirst(finalGame(), thirdPlaceGame());
 
-      await expect(service.updateGameScore('g1', { team1Points: 10, team2Points: 15 }, CURRENT_USER)).resolves.toBeDefined();
+      await expect(
+        service.updateGameScore('g1', { team1Points: 10, team2Points: 15 }, CURRENT_USER),
+      ).resolves.toBeDefined();
       expect(prisma.ongoingGame.update).toHaveBeenCalledWith({
         where: { id: 'g1' },
         data: { team1Points: 10, team2Points: 15 },
@@ -1390,7 +1437,9 @@ describe('OngoingService', () => {
     it('refuses once the tournament has started', async () => {
       prisma.ongoingGame.count = jest.fn(async () => 1);
 
-      await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' }, CURRENT_USER)).rejects.toThrow(ConflictException);
+      await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' }, CURRENT_USER)).rejects.toThrow(
+        ConflictException,
+      );
       expect(prisma.ongoingTeam.create).not.toHaveBeenCalled();
     });
 
@@ -1428,7 +1477,9 @@ describe('OngoingService', () => {
       it('is open for a tournament dated exactly today', async () => {
         prisma.ongoingEvent.findUnique = jest.fn(async () => eventDatedAt(NOW) as any);
 
-        await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' }, CURRENT_USER)).resolves.toBeDefined();
+        await expect(
+          service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' }, CURRENT_USER),
+        ).resolves.toBeDefined();
       });
 
       it('is closed for a tournament dated yesterday', async () => {
@@ -1444,14 +1495,18 @@ describe('OngoingService', () => {
         const todayLate = new Date(Date.UTC(NOW.getUTCFullYear(), NOW.getUTCMonth(), NOW.getUTCDate(), 23, 0, 0));
         prisma.ongoingEvent.findUnique = jest.fn(async () => eventDatedAt(todayLate) as any);
 
-        await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' }, CURRENT_USER)).resolves.toBeDefined();
+        await expect(
+          service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' }, CURRENT_USER),
+        ).resolves.toBeDefined();
       });
 
       it('is open for a tournament dated tomorrow', async () => {
         const tomorrow = new Date(Date.UTC(NOW.getUTCFullYear(), NOW.getUTCMonth(), NOW.getUTCDate() + 1));
         prisma.ongoingEvent.findUnique = jest.fn(async () => eventDatedAt(tomorrow) as any);
 
-        await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' }, CURRENT_USER)).resolves.toBeDefined();
+        await expect(
+          service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' }, CURRENT_USER),
+        ).resolves.toBeDefined();
       });
     });
 
@@ -1547,15 +1602,13 @@ describe('OngoingService', () => {
     });
 
     it('updateConfig() refuses a non-creator, non-admin user', async () => {
-      await expect(
-        service.updateConfig('event-1', { gamesPerPair: 1, courts: 1 }, NON_CREATOR_USER),
-      ).rejects.toThrow(ForbiddenException);
+      await expect(service.updateConfig('event-1', { gamesPerPair: 1, courts: 1 }, NON_CREATOR_USER)).rejects.toThrow(
+        ForbiddenException,
+      );
     });
 
     it('setTeams() refuses a non-creator, non-admin user', async () => {
-      await expect(service.setTeams('event-1', { teams: [] }, NON_CREATOR_USER)).rejects.toThrow(
-        ForbiddenException,
-      );
+      await expect(service.setTeams('event-1', { teams: [] }, NON_CREATOR_USER)).rejects.toThrow(ForbiddenException);
     });
 
     it('generateSchedule() refuses a non-creator, non-admin user', async () => {
@@ -1577,7 +1630,7 @@ describe('OngoingService', () => {
 
     it('updateGameScore() refuses a non-creator, non-admin user', async () => {
       prisma.ongoingGame.findUnique = jest.fn(
-        async () => ({ eventId: 'event-1', team1Id: 't1', team2Id: 't2', phase: 'group' }) as any,
+        async () => ({ eventId: 'event-1', team1Id: 't1', team2Id: 't2', phase: 'group' } as any),
       );
 
       await expect(
@@ -1587,14 +1640,25 @@ describe('OngoingService', () => {
 
     it('clearGameResult() refuses a non-creator, non-admin user', async () => {
       prisma.ongoingGame.findUnique = jest.fn(
-        async () => ({ eventId: 'event-1', team1Id: 't1', team2Id: 't2', phase: 'group' }) as any,
+        async () => ({ eventId: 'event-1', team1Id: 't1', team2Id: 't2', phase: 'group' } as any),
       );
 
       await expect(service.clearGameResult('game-1', NON_CREATOR_USER)).rejects.toThrow(ForbiddenException);
     });
 
     it('removeTeam() refuses a non-creator, non-admin user', async () => {
-      prisma.ongoingTeam.findUnique = jest.fn(async () => ({ id: 't1', eventId: 'event-1' }) as any);
+      // A future date and two players other than the caller's, so the refusal is unambiguously about
+      // who they are rather than about the cancellation deadline.
+      prisma.ongoingTeam.findUnique = jest.fn(
+        async () =>
+          ({
+            id: 't1',
+            eventId: 'event-1',
+            player1Id: 'p1',
+            player2Id: 'p2',
+            event: { createdByUserId: 'user-1', date: new Date('2999-01-01T00:00:00.000Z') },
+          } as any),
+      );
       prisma.ongoingGame.count = jest.fn(async () => 0);
 
       await expect(service.removeTeam('t1', NON_CREATOR_USER)).rejects.toThrow(ForbiddenException);
@@ -1632,10 +1696,14 @@ describe('OngoingService', () => {
       ).resolves.toBeDefined();
     });
 
+    // The rule only binds a non-manager: a creator or admin may register any pair (see the visibility
+    // design), so these two use a plain player rather than CURRENT_USER, which is an admin.
+    const PLAIN_PLAYER = { sub: 'user-9', email: 'p9@example.com', role: 'player', jti: 'jti-9', iat: 0, exp: 0 };
+
     it('refuses when neither player is the current user', async () => {
       userService.findById.mockResolvedValue({ playerId: 'p5' } as any);
 
-      await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' }, CURRENT_USER)).rejects.toThrow(
+      await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' }, PLAIN_PLAYER)).rejects.toThrow(
         new BadRequestException('You must register yourself as one of the two players'),
       );
       expect(prisma.ongoingTeam.create).not.toHaveBeenCalled();
@@ -1644,15 +1712,24 @@ describe('OngoingService', () => {
     it('refuses when the current user has no linked player', async () => {
       userService.findById.mockResolvedValue({ playerId: null } as any);
 
-      await expect(
-        service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' }, CURRENT_USER),
-      ).rejects.toThrow(new BadRequestException('You must register yourself as one of the two players'));
+      await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' }, PLAIN_PLAYER)).rejects.toThrow(
+        new BadRequestException('You must register yourself as one of the two players'),
+      );
     });
   });
 
   describe('OngoingService.removeTeam', () => {
     beforeEach(() => {
-      prisma.ongoingTeam.findUnique = jest.fn(async () => ({ id: 't1', eventId: 'event-1' } as any));
+      prisma.ongoingTeam.findUnique = jest.fn(
+        async () =>
+          ({
+            id: 't1',
+            eventId: 'event-1',
+            player1Id: 'p1',
+            player2Id: 'p2',
+            event: { createdByUserId: 'user-1', date: new Date('2999-01-01T00:00:00.000Z') },
+          } as any),
+      );
       prisma.ongoingTeam.delete = jest.fn(async () => ({ id: 't1' }));
       prisma.ongoingGame.count = jest.fn(async () => 0);
     });
@@ -1681,7 +1758,16 @@ describe('OngoingService', () => {
     it('checks the planning stage of the team OWN event', async () => {
       // Distinct from the default 'event-1' fixtures used elsewhere in this describe, so this test
       // actually binds to team.eventId rather than passing against a hardcoded 'event-1'.
-      prisma.ongoingTeam.findUnique = jest.fn(async () => ({ id: 't1', eventId: 'event-owning-the-team' } as any));
+      prisma.ongoingTeam.findUnique = jest.fn(
+        async () =>
+          ({
+            id: 't1',
+            eventId: 'event-owning-the-team',
+            player1Id: 'p1',
+            player2Id: 'p2',
+            event: { createdByUserId: 'user-1', date: new Date('2999-01-01T00:00:00.000Z') },
+          } as any),
+      );
 
       await service.removeTeam('t1', CURRENT_USER);
 
@@ -1700,8 +1786,10 @@ describe('OngoingService', () => {
       id: 'e',
       name: 'n',
       date: future,
-      config: { gamesPerPair: 1, courts: 1, maxTeams: null },
+      createdByUserId: 'user-1',
+      config: { gamesPerPair: 1, courts: 1, maxTeams: null, visibility: 'public', allowSoloRegistration: false },
       teams: [team],
+      soloPlayers: [],
       games: [],
       ...over,
     });
@@ -1728,12 +1816,18 @@ describe('OngoingService', () => {
       expect(await service.findOpen()).toHaveLength(1);
     });
 
-    it('excludes a tournament that is full', async () => {
+    // Full tournaments stay listed on purpose: the calendar shows them with registration disabled and
+    // a "no spots left" note, rather than making a filled-up tournament vanish from the page.
+    it('still lists a tournament that is full', async () => {
       prisma.ongoingEvent.findMany = jest.fn(
         async () => [row({ config: { gamesPerPair: 1, courts: 1, maxTeams: 1 } })] as any,
       );
 
-      expect(await service.findOpen()).toEqual([]);
+      const result = await service.findOpen();
+
+      expect(result).toHaveLength(1);
+      expect(result[0].maxTeams).toBe(1);
+      expect(result[0].teamsCount).toBe(1);
     });
 
     it('returns each open tournament with its roster and counts', async () => {
@@ -1745,6 +1839,10 @@ describe('OngoingService', () => {
       expect(result[0].teamsCount).toBe(1);
       expect(result[0].maxTeams).toBeNull();
       expect(result[0].teams[0].player1.name).toBe('A');
+      // The calendar decides whether to offer registration on a private tournament from this field.
+      expect(result[0].createdByUserId).toBe('user-1');
+      expect(result[0].visibility).toBe('public');
+      expect(result[0].allowSoloRegistration).toBe(false);
     });
 
     it('orders soonest first', async () => {
@@ -1791,7 +1889,9 @@ describe('OngoingService', () => {
       // count that assertPlanning issues with PLAYED_GAME_WHERE.
       prisma.ongoingGame.count = jest.fn(async () => [playedGame].filter(isGamePlayed).length);
 
-      await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' }, CURRENT_USER)).rejects.toThrow(ConflictException);
+      await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' }, CURRENT_USER)).rejects.toThrow(
+        ConflictException,
+      );
     });
   });
 
@@ -1801,12 +1901,15 @@ describe('OngoingService', () => {
     });
 
     it('creates the event, its config and the roster in one call', async () => {
-      await service.create({
-        name: 'T',
-        date: '2030-01-01T10:00:00.000Z',
-        maxTeams: 8,
-        teams: [{ player1Id: 'p1', player2Id: 'p2' }],
-      }, CURRENT_USER);
+      await service.create(
+        {
+          name: 'T',
+          date: '2030-01-01T10:00:00.000Z',
+          maxTeams: 8,
+          teams: [{ player1Id: 'p1', player2Id: 'p2' }],
+        },
+        CURRENT_USER,
+      );
 
       const args = (prisma.ongoingEvent.create as jest.Mock).mock.calls[0][0];
       expect(args.data.config.create).toEqual({
@@ -1816,6 +1919,8 @@ describe('OngoingService', () => {
         scheme: 'roundRobin',
         groupCount: 1,
         qualifiersPerGroup: null,
+        visibility: 'public',
+        allowSoloRegistration: false,
       });
       expect(args.data.teams.create).toEqual([{ player1Id: 'p1', player2Id: 'p2' }]);
     });
@@ -1824,7 +1929,10 @@ describe('OngoingService', () => {
       prisma.player.findMany = jest.fn(async () => [] as any);
 
       await expect(
-        service.create({ name: 'T', date: '2030-01-01T10:00:00.000Z', teams: [{ player1Id: 'p1', player2Id: 'p2' }] }, CURRENT_USER),
+        service.create(
+          { name: 'T', date: '2030-01-01T10:00:00.000Z', teams: [{ player1Id: 'p1', player2Id: 'p2' }] },
+          CURRENT_USER,
+        ),
       ).rejects.toThrow(NotFoundException);
       expect(prisma.ongoingEvent.create).not.toHaveBeenCalled();
     });
@@ -1969,9 +2077,9 @@ describe('OngoingService', () => {
 
   describe('OngoingService.updateConfig maxTeams', () => {
     it('rejects a maxTeams below two', async () => {
-      await expect(service.updateConfig('event-1', { gamesPerPair: 1, courts: 1, maxTeams: 1 }, CURRENT_USER)).rejects.toThrow(
-        new BadRequestException('maxTeams must be at least 2'),
-      );
+      await expect(
+        service.updateConfig('event-1', { gamesPerPair: 1, courts: 1, maxTeams: 1 }, CURRENT_USER),
+      ).rejects.toThrow(new BadRequestException('maxTeams must be at least 2'));
     });
 
     it('rejects a maxTeams below the number of teams already registered', async () => {
@@ -1987,9 +2095,9 @@ describe('OngoingService', () => {
           } as any),
       );
 
-      await expect(service.updateConfig('event-1', { gamesPerPair: 1, courts: 1, maxTeams: 2 }, CURRENT_USER)).rejects.toThrow(
-        new BadRequestException('maxTeams cannot be lower than the number of registered teams'),
-      );
+      await expect(
+        service.updateConfig('event-1', { gamesPerPair: 1, courts: 1, maxTeams: 2 }, CURRENT_USER),
+      ).rejects.toThrow(new BadRequestException('maxTeams cannot be lower than the number of registered teams'));
     });
 
     it('accepts an absent maxTeams as unlimited', async () => {
@@ -2008,13 +2116,17 @@ describe('OngoingService', () => {
     });
 
     it('forces roundRobin to a single group with no qualifiers', async () => {
-      await service.updateConfig('event-1', {
-        gamesPerPair: 1,
-        courts: 1,
-        scheme: 'roundRobin',
-        groupCount: 3,
-        qualifiersPerGroup: 2,
-      } as any, CURRENT_USER);
+      await service.updateConfig(
+        'event-1',
+        {
+          gamesPerPair: 1,
+          courts: 1,
+          scheme: 'roundRobin',
+          groupCount: 3,
+          qualifiersPerGroup: 2,
+        } as any,
+        CURRENT_USER,
+      );
 
       const args = (prisma.ongoingEventConfig.upsert as jest.Mock).mock.calls[0][0];
       expect(args.update.groupCount).toBe(1);
@@ -2023,24 +2135,32 @@ describe('OngoingService', () => {
 
     it('requires at least one group for groupsPlayoff', async () => {
       await expect(
-        service.updateConfig('event-1', {
-          gamesPerPair: 1,
-          courts: 1,
-          scheme: 'groupsPlayoff',
-          groupCount: 0,
-          qualifiersPerGroup: 2,
-        } as any, CURRENT_USER),
+        service.updateConfig(
+          'event-1',
+          {
+            gamesPerPair: 1,
+            courts: 1,
+            scheme: 'groupsPlayoff',
+            groupCount: 0,
+            qualifiersPerGroup: 2,
+          } as any,
+          CURRENT_USER,
+        ),
       ).rejects.toThrow(new BadRequestException('groupsPlayoff needs at least 1 group'));
     });
 
     it('accepts a single group, which seeds the playoff straight off one table', async () => {
-      await service.updateConfig('event-1', {
-        gamesPerPair: 1,
-        courts: 1,
-        scheme: 'groupsPlayoff',
-        groupCount: 1,
-        qualifiersPerGroup: 4,
-      } as any, CURRENT_USER);
+      await service.updateConfig(
+        'event-1',
+        {
+          gamesPerPair: 1,
+          courts: 1,
+          scheme: 'groupsPlayoff',
+          groupCount: 1,
+          qualifiersPerGroup: 4,
+        } as any,
+        CURRENT_USER,
+      );
 
       const args = (prisma.ongoingEventConfig.upsert as jest.Mock).mock.calls[0][0];
       expect(args.update.scheme).toBe('groupsPlayoff');
@@ -2050,24 +2170,32 @@ describe('OngoingService', () => {
 
     it('rejects a bracket size that is not a power of two', async () => {
       await expect(
-        service.updateConfig('event-1', {
-          gamesPerPair: 1,
-          courts: 1,
-          scheme: 'groupsPlayoff',
-          groupCount: 3,
-          qualifiersPerGroup: 3,
-        } as any, CURRENT_USER),
+        service.updateConfig(
+          'event-1',
+          {
+            gamesPerPair: 1,
+            courts: 1,
+            scheme: 'groupsPlayoff',
+            groupCount: 3,
+            qualifiersPerGroup: 3,
+          } as any,
+          CURRENT_USER,
+        ),
       ).rejects.toThrow(new BadRequestException('groupCount times qualifiersPerGroup must be a power of two'));
     });
 
     it('accepts 2 groups with 2 qualifiers each', async () => {
-      await service.updateConfig('event-1', {
-        gamesPerPair: 1,
-        courts: 1,
-        scheme: 'groupsPlayoff',
-        groupCount: 2,
-        qualifiersPerGroup: 2,
-      } as any, CURRENT_USER);
+      await service.updateConfig(
+        'event-1',
+        {
+          gamesPerPair: 1,
+          courts: 1,
+          scheme: 'groupsPlayoff',
+          groupCount: 2,
+          qualifiersPerGroup: 2,
+        } as any,
+        CURRENT_USER,
+      );
 
       const args = (prisma.ongoingEventConfig.upsert as jest.Mock).mock.calls[0][0];
       expect(args.update.scheme).toBe('groupsPlayoff');
@@ -2076,13 +2204,17 @@ describe('OngoingService', () => {
     });
 
     it('accepts 2 groups with 4 qualifiers each', async () => {
-      await service.updateConfig('event-1', {
-        gamesPerPair: 1,
-        courts: 1,
-        scheme: 'groupsPlayoff',
-        groupCount: 2,
-        qualifiersPerGroup: 4,
-      } as any, CURRENT_USER);
+      await service.updateConfig(
+        'event-1',
+        {
+          gamesPerPair: 1,
+          courts: 1,
+          scheme: 'groupsPlayoff',
+          groupCount: 2,
+          qualifiersPerGroup: 4,
+        } as any,
+        CURRENT_USER,
+      );
 
       expect(prisma.ongoingEventConfig.upsert).toHaveBeenCalled();
     });
@@ -2264,6 +2396,8 @@ describe('OngoingService', () => {
               scheme: 'roundRobin',
               groupCount: 1,
               qualifiersPerGroup: null,
+              visibility: 'public',
+              allowSoloRegistration: false,
             },
           } as any),
       );
@@ -2554,6 +2688,72 @@ describe('OngoingService', () => {
         expect.objectContaining({ where: { finishedAt: null } }),
       );
     });
+
+    // The list card names the roster, the solo pool and the organiser, so all three travel with it
+    // rather than the page having to fan out to the detail endpoint per tournament.
+    it('carries the roster, the solo pool and the creator on each list item', async () => {
+      prisma.ongoingEvent.findMany = jest.fn(async () => [
+        {
+          ...EVENT_ROW,
+          createdByUser: { id: 'user-1', name: 'Ann Organiser' },
+          teams: [
+            {
+              id: 'team-1',
+              player1: { id: 'p1', name: 'Ann', avatar: null, playerStats: { rank: 1200 } },
+              player2: { id: 'p2', name: 'Bob', avatar: null, playerStats: { rank: 900 } },
+            },
+          ],
+          soloPlayers: [{ id: 'solo-1', player: { id: 'p3', name: 'Cid', avatar: null, playerStats: null } }],
+          games: [],
+        },
+      ]) as any;
+
+      const [item] = await service.findAll();
+
+      expect(item.teamsCount).toBe(1);
+      expect(item.teams).toEqual([
+        {
+          id: 'team-1',
+          player1: { id: 'p1', name: 'Ann', avatar: null },
+          player2: { id: 'p2', name: 'Bob', avatar: null },
+          rating: 2100,
+          groupIndex: null,
+        },
+      ]);
+      expect(item.soloPlayers).toEqual([
+        { id: 'solo-1', player: { id: 'p3', name: 'Cid', avatar: null }, rating: 1000 },
+      ]);
+      expect(item.createdBy).toEqual({ id: 'user-1', name: 'Ann Organiser' });
+      expect(item.visibility).toBe('public');
+    });
+
+    it('marks a private tournament on the list item', async () => {
+      prisma.ongoingEvent.findMany = jest.fn(async () => [
+        { ...EVENT_ROW, config: { ...EVENT_ROW.config, visibility: 'private' }, games: [] },
+      ]) as any;
+
+      const [item] = await service.findAll();
+
+      expect(item.visibility).toBe('private');
+    });
+
+    it('falls back to public when the config row is absent', async () => {
+      prisma.ongoingEvent.findMany = jest.fn(async () => [{ ...EVENT_ROW, config: null, games: [] }]) as any;
+
+      const [item] = await service.findAll();
+
+      expect(item.visibility).toBe('public');
+    });
+
+    it('reports a null creator when the account behind the tournament is gone', async () => {
+      prisma.ongoingEvent.findMany = jest.fn(async () => [
+        { ...EVENT_ROW, createdByUserId: null, createdByUser: null, games: [] },
+      ]) as any;
+
+      const [item] = await service.findAll();
+
+      expect(item.createdBy).toBeNull();
+    });
   });
 
   describe('OngoingService.finishTournament', () => {
@@ -2617,7 +2817,14 @@ describe('OngoingService', () => {
             config: { scheme: 'groupsPlayoff', groupCount: 2, qualifiersPerGroup: 2 },
             games: [
               game({ id: 'final', phase: 'playoff', bracketRound: 2, team1Points: 21, team2Points: 15 }),
-              game({ id: 'third', phase: 'playoff', bracketRound: null, thirdPlace: true, team1Points: 21, team2Points: 18 }),
+              game({
+                id: 'third',
+                phase: 'playoff',
+                bracketRound: null,
+                thirdPlace: true,
+                team1Points: 21,
+                team2Points: 18,
+              }),
             ],
           } as any),
       );
@@ -2711,6 +2918,554 @@ describe('OngoingService', () => {
 
       await expect(service.deletePlayoff('missing', CURRENT_USER)).rejects.toThrow(NotFoundException);
       expect(prisma.ongoingGame.deleteMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('OngoingService.findOne solo pool', () => {
+    it('maps solo entrants with their own rating, not a team sum', async () => {
+      prisma.ongoingEvent.findUnique = jest.fn(async () => ({
+        ...EVENT_ROW,
+        soloPlayers: [
+          {
+            id: 'solo-1',
+            player: { id: 'p1', name: 'Ann', avatar: null, playerStats: { rank: 1300 } },
+          },
+          {
+            id: 'solo-2',
+            player: { id: 'p2', name: 'Bob', avatar: null, playerStats: null },
+          },
+        ],
+      })) as any;
+
+      const event = await service.findOne('event-1');
+
+      expect(event.soloPlayers).toEqual([
+        { id: 'solo-1', player: { id: 'p1', name: 'Ann', avatar: null }, rating: 1300 },
+        { id: 'solo-2', player: { id: 'p2', name: 'Bob', avatar: null }, rating: 1000 },
+      ]);
+    });
+
+    it('exposes the two registration flags on the config', async () => {
+      prisma.ongoingEvent.findUnique = jest.fn(async () => ({
+        ...EVENT_ROW,
+        config: { ...EVENT_ROW.config, visibility: 'private', allowSoloRegistration: true },
+      })) as any;
+
+      const event = await service.findOne('event-1');
+
+      expect(event.config.visibility).toBe('private');
+      expect(event.config.allowSoloRegistration).toBe(true);
+    });
+
+    it('defaults the flags when the config row is absent', async () => {
+      prisma.ongoingEvent.findUnique = jest.fn(async () => ({ ...EVENT_ROW, config: null })) as any;
+
+      const event = await service.findOne('event-1');
+
+      expect(event.config.visibility).toBe('public');
+      expect(event.config.allowSoloRegistration).toBe(false);
+    });
+  });
+
+  describe('OngoingService registration flags', () => {
+    it('defaults a new tournament to public with solo registration off', async () => {
+      await service.create({ name: 'WBSA Warsaw', date: '2026-08-23T10:00:00.000Z' }, CURRENT_USER);
+
+      expect(prisma.ongoingEvent.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            config: { create: expect.objectContaining({ visibility: 'public', allowSoloRegistration: false }) },
+          }),
+        }),
+      );
+    });
+
+    it('persists the flags given at creation', async () => {
+      await service.create(
+        { name: 'WBSA Warsaw', date: '2026-08-23T10:00:00.000Z', visibility: 'private', allowSoloRegistration: true },
+        CURRENT_USER,
+      );
+
+      expect(prisma.ongoingEvent.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            config: { create: expect.objectContaining({ visibility: 'private', allowSoloRegistration: true }) },
+          }),
+        }),
+      );
+    });
+
+    it('rejects a visibility that is neither public nor private', async () => {
+      await expect(
+        service.create(
+          { name: 'WBSA Warsaw', date: '2026-08-23T10:00:00.000Z', visibility: 'secret' } as any,
+          CURRENT_USER,
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects a non-boolean allowSoloRegistration', async () => {
+      await expect(
+        service.create(
+          { name: 'WBSA Warsaw', date: '2026-08-23T10:00:00.000Z', allowSoloRegistration: 'yes' } as any,
+          CURRENT_USER,
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('writes both flags through updateConfig', async () => {
+      await service.updateConfig(
+        'event-1',
+        { gamesPerPair: 1, courts: 2, visibility: 'private', allowSoloRegistration: true },
+        CURRENT_USER,
+      );
+
+      expect(prisma.ongoingEventConfig.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          update: expect.objectContaining({ visibility: 'private', allowSoloRegistration: true }),
+        }),
+      );
+    });
+
+    it('refuses to turn solo registration off while the pool is not empty', async () => {
+      prisma.ongoingEvent.findUnique = jest.fn(async () => ({
+        ...EVENT_ROW,
+        config: { ...EVENT_ROW.config, allowSoloRegistration: true },
+        soloPlayers: [{ id: 'solo-1', player: { id: 'p1', name: 'Ann', avatar: null, playerStats: null } }],
+      })) as any;
+
+      await expect(
+        service.updateConfig('event-1', { gamesPerPair: 1, courts: 2, allowSoloRegistration: false }, CURRENT_USER),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('OngoingService.addSoloPlayer', () => {
+    const PLAYER_USER = { sub: 'user-9', email: 'p9@example.com', role: 'player', jti: 'jti-9', iat: 0, exp: 0 };
+
+    const openSoloEvent = (overrides: any = {}) => ({
+      ...EVENT_ROW,
+      date: new Date('2999-01-01T00:00:00.000Z'),
+      config: { ...EVENT_ROW.config, allowSoloRegistration: true },
+      ...overrides,
+    });
+
+    it('registers the caller into the pool of a public tournament', async () => {
+      prisma.ongoingEvent.findUnique = jest.fn(async () => openSoloEvent()) as any;
+      prisma.player.findMany = jest.fn(async () => [{ id: 'p3' }]) as any;
+      userService.findById = jest.fn(async () => ({ playerId: 'p3' } as any));
+
+      await service.addSoloPlayer('event-1', {}, PLAYER_USER);
+
+      expect(prisma.ongoingSoloPlayer.create).toHaveBeenCalledWith({
+        data: { eventId: 'event-1', playerId: 'p3' },
+      });
+    });
+
+    it('refuses a non-manager registering somebody else', async () => {
+      prisma.ongoingEvent.findUnique = jest.fn(async () => openSoloEvent()) as any;
+      userService.findById = jest.fn(async () => ({ playerId: 'p3' } as any));
+
+      await expect(service.addSoloPlayer('event-1', { playerId: 'p7' }, PLAYER_USER)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('refuses a non-manager on a private tournament', async () => {
+      prisma.ongoingEvent.findUnique = jest.fn(async () =>
+        openSoloEvent({ config: { ...EVENT_ROW.config, allowSoloRegistration: true, visibility: 'private' } }),
+      ) as any;
+      userService.findById = jest.fn(async () => ({ playerId: 'p3' } as any));
+
+      await expect(service.addSoloPlayer('event-1', {}, PLAYER_USER)).rejects.toThrow(ForbiddenException);
+    });
+
+    it('lets a manager add any player to a private tournament', async () => {
+      prisma.ongoingEvent.findUnique = jest.fn(async () =>
+        openSoloEvent({
+          createdByUserId: 'user-1',
+          config: { ...EVENT_ROW.config, allowSoloRegistration: true, visibility: 'private' },
+        }),
+      ) as any;
+      prisma.player.findMany = jest.fn(async () => [{ id: 'p7' }]) as any;
+
+      await service.addSoloPlayer('event-1', { playerId: 'p7' }, CURRENT_USER);
+
+      expect(prisma.ongoingSoloPlayer.create).toHaveBeenCalledWith({
+        data: { eventId: 'event-1', playerId: 'p7' },
+      });
+    });
+
+    it('refuses when solo registration is switched off', async () => {
+      prisma.ongoingEvent.findUnique = jest.fn(async () => openSoloEvent({ config: { ...EVENT_ROW.config } })) as any;
+      userService.findById = jest.fn(async () => ({ playerId: 'p3' } as any));
+
+      await expect(service.addSoloPlayer('event-1', {}, PLAYER_USER)).rejects.toThrow(ConflictException);
+    });
+
+    it('refuses a player who is already on the roster', async () => {
+      prisma.ongoingEvent.findUnique = jest.fn(async () =>
+        openSoloEvent({
+          teams: [
+            {
+              id: 'team-1',
+              player1: { id: 'p3', name: 'Ann', avatar: null, playerStats: null },
+              player2: { id: 'p4', name: 'Bob', avatar: null, playerStats: null },
+            },
+          ],
+        }),
+      ) as any;
+      userService.findById = jest.fn(async () => ({ playerId: 'p3' } as any));
+
+      await expect(service.addSoloPlayer('event-1', {}, PLAYER_USER)).rejects.toThrow(ConflictException);
+    });
+  });
+
+  describe('OngoingService.removeSoloPlayer', () => {
+    const PLAYER_USER = { sub: 'user-9', email: 'p9@example.com', role: 'player', jti: 'jti-9', iat: 0, exp: 0 };
+
+    it('lets the entrant withdraw before the day of the tournament', async () => {
+      prisma.ongoingSoloPlayer.findUnique = jest.fn(async () => ({
+        id: 'solo-1',
+        eventId: 'event-1',
+        playerId: 'p3',
+        event: { createdByUserId: 'user-1', date: new Date('2999-01-01T00:00:00.000Z') },
+      })) as any;
+      userService.findById = jest.fn(async () => ({ playerId: 'p3' } as any));
+
+      await service.removeSoloPlayer('solo-1', PLAYER_USER);
+
+      expect(prisma.ongoingSoloPlayer.delete).toHaveBeenCalledWith({ where: { id: 'solo-1' } });
+    });
+
+    it('refuses the entrant on the day of the tournament', async () => {
+      prisma.ongoingSoloPlayer.findUnique = jest.fn(async () => ({
+        id: 'solo-1',
+        eventId: 'event-1',
+        playerId: 'p3',
+        event: { createdByUserId: 'user-1', date: new Date() },
+      })) as any;
+      userService.findById = jest.fn(async () => ({ playerId: 'p3' } as any));
+
+      await expect(service.removeSoloPlayer('solo-1', PLAYER_USER)).rejects.toThrow(ForbiddenException);
+    });
+
+    it('lets a manager withdraw an entrant on the day of the tournament', async () => {
+      prisma.ongoingSoloPlayer.findUnique = jest.fn(async () => ({
+        id: 'solo-1',
+        eventId: 'event-1',
+        playerId: 'p3',
+        event: { createdByUserId: 'user-1', date: new Date() },
+      })) as any;
+
+      await service.removeSoloPlayer('solo-1', CURRENT_USER);
+
+      expect(prisma.ongoingSoloPlayer.delete).toHaveBeenCalledWith({ where: { id: 'solo-1' } });
+    });
+
+    it('refuses an unrelated player', async () => {
+      prisma.ongoingSoloPlayer.findUnique = jest.fn(async () => ({
+        id: 'solo-1',
+        eventId: 'event-1',
+        playerId: 'p3',
+        event: { createdByUserId: 'user-1', date: new Date('2999-01-01T00:00:00.000Z') },
+      })) as any;
+      userService.findById = jest.fn(async () => ({ playerId: 'p8' } as any));
+
+      await expect(service.removeSoloPlayer('solo-1', PLAYER_USER)).rejects.toThrow(ForbiddenException);
+    });
+  });
+
+  describe('OngoingService.addTeam access and capacity', () => {
+    const PLAYER_USER = { sub: 'user-9', email: 'p9@example.com', role: 'player', jti: 'jti-9', iat: 0, exp: 0 };
+
+    const futureEvent = (overrides: any = {}) => ({
+      ...EVENT_ROW,
+      date: new Date('2999-01-01T00:00:00.000Z'),
+      ...overrides,
+    });
+
+    it('refuses a non-manager on a private tournament', async () => {
+      prisma.ongoingEvent.findUnique = jest.fn(async () =>
+        futureEvent({ config: { ...EVENT_ROW.config, visibility: 'private' } }),
+      ) as any;
+      userService.findById = jest.fn(async () => ({ playerId: 'p3' } as any));
+
+      await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' }, PLAYER_USER)).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+
+    it('lets a manager register a pair they are not part of', async () => {
+      prisma.ongoingEvent.findUnique = jest.fn(async () =>
+        futureEvent({ createdByUserId: 'user-1', config: { ...EVENT_ROW.config, visibility: 'private' } }),
+      ) as any;
+      prisma.player.findMany = jest.fn(async () => [{ id: 'p3' }, { id: 'p4' }]) as any;
+
+      await service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' }, CURRENT_USER);
+
+      expect(prisma.ongoingTeam.create).toHaveBeenCalledWith({
+        data: { eventId: 'event-1', player1Id: 'p3', player2Id: 'p4' },
+      });
+    });
+
+    it('counts solo entrants against maxTeams', async () => {
+      prisma.ongoingEvent.findUnique = jest.fn(async () =>
+        futureEvent({
+          config: { ...EVENT_ROW.config, maxTeams: 2 },
+          teams: [
+            {
+              id: 'team-1',
+              player1: { id: 'p1', name: 'Ann', avatar: null, playerStats: null },
+              player2: { id: 'p2', name: 'Bob', avatar: null, playerStats: null },
+            },
+          ],
+          soloPlayers: [
+            { id: 'solo-1', player: { id: 'p5', name: 'Cid', avatar: null, playerStats: null } },
+            { id: 'solo-2', player: { id: 'p6', name: 'Dot', avatar: null, playerStats: null } },
+          ],
+        }),
+      ) as any;
+      userService.findById = jest.fn(async () => ({ playerId: 'p3' } as any));
+
+      await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' }, PLAYER_USER)).rejects.toThrow(
+        ConflictException,
+      );
+    });
+
+    it('refuses a pair containing somebody already in the solo pool', async () => {
+      prisma.ongoingEvent.findUnique = jest.fn(async () =>
+        futureEvent({
+          soloPlayers: [{ id: 'solo-1', player: { id: 'p4', name: 'Dot', avatar: null, playerStats: null } }],
+        }),
+      ) as any;
+      userService.findById = jest.fn(async () => ({ playerId: 'p3' } as any));
+
+      await expect(service.addTeam('event-1', { player1Id: 'p3', player2Id: 'p4' }, PLAYER_USER)).rejects.toThrow(
+        ConflictException,
+      );
+    });
+
+    it('drops the solo entries of everybody named in a replaced roster', async () => {
+      prisma.ongoingEvent.findUnique = jest.fn(async () => futureEvent({ createdByUserId: 'user-1' })) as any;
+      prisma.player.findMany = jest.fn(async () => [{ id: 'p3' }, { id: 'p4' }]) as any;
+
+      await service.setTeams('event-1', { teams: [{ player1Id: 'p3', player2Id: 'p4' }] }, CURRENT_USER);
+
+      expect(prisma.ongoingSoloPlayer.deleteMany).toHaveBeenCalledWith({
+        where: { eventId: 'event-1', playerId: { in: ['p3', 'p4'] } },
+      });
+    });
+
+    // The capacity is reported, not enforced, by findOpen — the client decides what to disable. addTeam
+    // stays the enforcement point and still 409s once the slots are gone.
+    it('lists a tournament whose capacity is taken by solo entrants, with the numbers to judge it', async () => {
+      prisma.ongoingEvent.findMany = jest.fn(async () => [
+        futureEvent({
+          config: { ...EVENT_ROW.config, maxTeams: 1 },
+          soloPlayers: [
+            { id: 'solo-1', player: { id: 'p5', name: 'Cid', avatar: null, playerStats: null } },
+            { id: 'solo-2', player: { id: 'p6', name: 'Dot', avatar: null, playerStats: null } },
+          ],
+        }),
+      ]) as any;
+
+      const result = await service.findOpen();
+
+      expect(result).toHaveLength(1);
+      expect(result[0].maxTeams).toBe(1);
+      expect(result[0].teamsCount).toBe(0);
+      expect(result[0].soloPlayers).toHaveLength(2);
+    });
+  });
+
+  describe('OngoingService.removeTeam self-cancellation', () => {
+    const PLAYER_USER = { sub: 'user-9', email: 'p9@example.com', role: 'player', jti: 'jti-9', iat: 0, exp: 0 };
+
+    const teamRow = (eventDate: Date) => ({
+      id: 'team-1',
+      eventId: 'event-1',
+      player1Id: 'p3',
+      player2Id: 'p4',
+      event: { createdByUserId: 'user-1', date: eventDate },
+    });
+
+    it('lets a member remove their own team before the day of the tournament', async () => {
+      prisma.ongoingTeam.findUnique = jest.fn(async () => teamRow(new Date('2999-01-01T00:00:00.000Z'))) as any;
+      userService.findById = jest.fn(async () => ({ playerId: 'p4' } as any));
+
+      await service.removeTeam('team-1', PLAYER_USER);
+
+      expect(prisma.ongoingTeam.delete).toHaveBeenCalledWith({ where: { id: 'team-1' } });
+    });
+
+    it('refuses a member on the day of the tournament', async () => {
+      prisma.ongoingTeam.findUnique = jest.fn(async () => teamRow(new Date())) as any;
+      userService.findById = jest.fn(async () => ({ playerId: 'p4' } as any));
+
+      await expect(service.removeTeam('team-1', PLAYER_USER)).rejects.toThrow(ForbiddenException);
+    });
+
+    it('lets a manager remove a team on the day of the tournament', async () => {
+      prisma.ongoingTeam.findUnique = jest.fn(async () => teamRow(new Date())) as any;
+
+      await service.removeTeam('team-1', CURRENT_USER);
+
+      expect(prisma.ongoingTeam.delete).toHaveBeenCalledWith({ where: { id: 'team-1' } });
+    });
+
+    it('refuses a player who is in neither slot', async () => {
+      prisma.ongoingTeam.findUnique = jest.fn(async () => teamRow(new Date('2999-01-01T00:00:00.000Z'))) as any;
+      userService.findById = jest.fn(async () => ({ playerId: 'p8' } as any));
+
+      await expect(service.removeTeam('team-1', PLAYER_USER)).rejects.toThrow(ForbiddenException);
+    });
+  });
+
+  describe('OngoingService solo pairing', () => {
+    const poolEvent = (ratings: Array<[string, number | null]>) => ({
+      ...EVENT_ROW,
+      createdByUserId: 'user-1',
+      date: new Date('2999-01-01T00:00:00.000Z'),
+      soloPlayers: ratings.map(([id, rank], index) => ({
+        id: `solo-${index + 1}`,
+        player: {
+          id,
+          name: id.toUpperCase(),
+          avatar: null,
+          playerStats: rank === null ? null : { rank },
+        },
+      })),
+    });
+
+    it('previews strongest-with-weakest pairs and the team rating', async () => {
+      prisma.ongoingEvent.findUnique = jest.fn(async () =>
+        poolEvent([
+          ['a', 1300],
+          ['b', 1200],
+          ['c', 1000],
+          ['d', 800],
+        ]),
+      ) as any;
+
+      const preview = await service.previewSoloPairing('event-1', CURRENT_USER);
+
+      expect(preview.pairs.map((pair) => [pair.player1.id, pair.player2.id, pair.rating])).toEqual([
+        ['a', 'd', 2100],
+        ['b', 'c', 2200],
+      ]);
+      expect(preview.unpaired).toEqual([]);
+    });
+
+    it('reports the leftover player when the pool is odd', async () => {
+      prisma.ongoingEvent.findUnique = jest.fn(async () =>
+        poolEvent([
+          ['a', 1300],
+          ['b', 1200],
+          ['c', 1000],
+        ]),
+      ) as any;
+
+      const preview = await service.previewSoloPairing('event-1', CURRENT_USER);
+
+      expect(preview.unpaired.map((player) => player.id)).toEqual(['b']);
+    });
+
+    it('creates the confirmed teams and empties the matching pool rows in one transaction', async () => {
+      const calls: string[] = [];
+      prisma.ongoingEvent.findUnique = jest.fn(async () =>
+        poolEvent([
+          ['a', 1300],
+          ['b', 800],
+        ]),
+      ) as any;
+      prisma.ongoingTeam.createMany = jest.fn(async () => {
+        calls.push('createTeams');
+        return { count: 1 };
+      });
+      prisma.ongoingSoloPlayer.deleteMany = jest.fn(async () => {
+        calls.push('deleteSolo');
+        return { count: 2 };
+      });
+
+      await service.formTeamsFromSolo('event-1', { teams: [{ player1Id: 'a', player2Id: 'b' }] }, CURRENT_USER);
+
+      expect(prisma.$transaction).toHaveBeenCalled();
+      expect(calls).toEqual(['createTeams', 'deleteSolo']);
+      expect(prisma.ongoingTeam.createMany).toHaveBeenCalledWith({
+        data: [{ eventId: 'event-1', player1Id: 'a', player2Id: 'b' }],
+      });
+      expect(prisma.ongoingSoloPlayer.deleteMany).toHaveBeenCalledWith({
+        where: { eventId: 'event-1', playerId: { in: ['a', 'b'] } },
+      });
+    });
+
+    it('rejects a player who is not in this pool without writing anything', async () => {
+      prisma.ongoingEvent.findUnique = jest.fn(async () =>
+        poolEvent([
+          ['a', 1300],
+          ['b', 800],
+        ]),
+      ) as any;
+
+      await expect(
+        service.formTeamsFromSolo('event-1', { teams: [{ player1Id: 'a', player2Id: 'zz' }] }, CURRENT_USER),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.ongoingTeam.createMany).not.toHaveBeenCalled();
+    });
+
+    it('rejects the same player appearing in two confirmed teams', async () => {
+      prisma.ongoingEvent.findUnique = jest.fn(async () =>
+        poolEvent([
+          ['a', 1300],
+          ['b', 1000],
+          ['c', 800],
+        ]),
+      ) as any;
+
+      await expect(
+        service.formTeamsFromSolo(
+          'event-1',
+          {
+            teams: [
+              { player1Id: 'a', player2Id: 'b' },
+              { player1Id: 'a', player2Id: 'c' },
+            ],
+          },
+          CURRENT_USER,
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('accepts a subset and leaves the rest in the pool', async () => {
+      prisma.ongoingEvent.findUnique = jest.fn(async () =>
+        poolEvent([
+          ['a', 1300],
+          ['b', 1000],
+          ['c', 800],
+        ]),
+      ) as any;
+
+      await service.formTeamsFromSolo('event-1', { teams: [{ player1Id: 'a', player2Id: 'c' }] }, CURRENT_USER);
+
+      expect(prisma.ongoingSoloPlayer.deleteMany).toHaveBeenCalledWith({
+        where: { eventId: 'event-1', playerId: { in: ['a', 'c'] } },
+      });
+    });
+
+    it('refuses a non-manager', async () => {
+      prisma.ongoingEvent.findUnique = jest.fn(async () => poolEvent([['a', 1300]])) as any;
+
+      await expect(
+        service.previewSoloPairing('event-1', {
+          sub: 'user-9',
+          email: 'p9@example.com',
+          role: 'player',
+          jti: 'jti-9',
+          iat: 0,
+          exp: 0,
+        }),
+      ).rejects.toThrow(ForbiddenException);
     });
   });
 });

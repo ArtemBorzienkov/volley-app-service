@@ -1,4 +1,4 @@
-import { IsInt, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsString } from 'class-validator';
 
 export class UpdateOngoingConfigDto {
   @IsInt()
@@ -22,4 +22,12 @@ export class UpdateOngoingConfigDto {
   @IsOptional()
   @IsInt()
   qualifiersPerGroup?: number;
+
+  @IsOptional()
+  @IsString()
+  visibility?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  allowSoloRegistration?: boolean;
 }

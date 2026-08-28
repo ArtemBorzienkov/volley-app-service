@@ -2,11 +2,14 @@ import { ConfigService } from '@nestjs/config';
 import { JwtModuleOptions } from '@nestjs/jwt';
 import type { CookieOptions } from 'express';
 
+export const HOUR_IN_MS = 60 * 60 * 1000;
+const DAY_IN_MS = 24 * HOUR_IN_MS;
+
 export const ACCESS_TOKEN_COOKIE = 'access_token';
-export const ACCESS_TOKEN_TTL_MS = 30 * 60 * 1000; // 30 minutes
-export const ACCESS_TOKEN_TTL_SECONDS = 30 * 60; // 30 minutes
+export const ACCESS_TOKEN_TTL_MS = 3 * DAY_IN_MS; // 3 days
+export const ACCESS_TOKEN_TTL_SECONDS = (3 * DAY_IN_MS) / 1000; // 3 days
 // When a token has less than this left, the guard rotates it transparently.
-export const ACCESS_TOKEN_REFRESH_THRESHOLD_SECONDS = 10 * 60; // 10 minutes
+export const ACCESS_TOKEN_REFRESH_THRESHOLD_SECONDS = (1 * HOUR_IN_MS) / 1000; // 1 day
 
 export const accessTokenCookieOptions = (isProduction: boolean): CookieOptions => ({
   httpOnly: true,

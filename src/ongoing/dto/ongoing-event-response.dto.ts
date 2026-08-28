@@ -12,6 +12,23 @@ export class OngoingTeamResponseDto {
   groupIndex: number | null;
 }
 
+export class OngoingSoloPlayerDto {
+  id: string;
+  player: OngoingTeamPlayerDto;
+  rating: number;
+}
+
+export class OngoingSoloPairDto {
+  player1: OngoingTeamPlayerDto;
+  player2: OngoingTeamPlayerDto;
+  rating: number;
+}
+
+export class OngoingSoloPairPreviewDto {
+  pairs: OngoingSoloPairDto[];
+  unpaired: OngoingTeamPlayerDto[];
+}
+
 export class OngoingGameResponseDto {
   id: string;
   eventId: string;
@@ -35,6 +52,8 @@ export class OngoingEventConfigResponseDto {
   scheme: string;
   groupCount: number;
   qualifiersPerGroup: number | null;
+  visibility: string;
+  allowSoloRegistration: boolean;
 }
 
 export class OngoingEventResponseDto {
@@ -49,7 +68,13 @@ export class OngoingEventResponseDto {
   createdByUserId: string | null;
   config: OngoingEventConfigResponseDto;
   teams: OngoingTeamResponseDto[];
+  soloPlayers: OngoingSoloPlayerDto[];
   games: OngoingGameResponseDto[];
+}
+
+export class OngoingEventCreatorDto {
+  id: string;
+  name: string;
 }
 
 export class OngoingEventListItemDto {
@@ -59,9 +84,17 @@ export class OngoingEventListItemDto {
   startTime: string | null;
   location: string | null;
   createdByUserId: string | null;
+  // The account, not the player: createdByUserId points at users, and a creator need not be linked
+  // to a player at all. Null once that account is deleted (the FK is ON DELETE SET NULL).
+  createdBy: OngoingEventCreatorDto | null;
+  // 'public' | 'private' — who may register, the same field the config carries. Present here so the
+  // list card can say it without fetching each tournament's detail.
+  visibility: string;
   teamsCount: number;
   gamesCount: number;
   playedCount: number;
+  teams: OngoingTeamResponseDto[];
+  soloPlayers: OngoingSoloPlayerDto[];
 }
 
 export class OngoingOpenEventDto {
@@ -72,5 +105,9 @@ export class OngoingOpenEventDto {
   location: string | null;
   maxTeams: number | null;
   teamsCount: number;
+  createdByUserId: string | null;
   teams: OngoingTeamResponseDto[];
+  visibility: string;
+  allowSoloRegistration: boolean;
+  soloPlayers: OngoingSoloPlayerDto[];
 }

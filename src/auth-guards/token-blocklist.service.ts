@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
+import { HOUR_IN_MS } from './jwt.config';
 
-const REVOKED_JWTS_CLEANUP_INTERVAL_MS = 1000 * 60 * 60 * 24; // 24 hours
+const REVOKED_JWTS_CLEANUP_INTERVAL_MS = 24 * HOUR_IN_MS; // 24 hours
 
 @Injectable()
 export class TokenBlocklistService {
@@ -23,8 +24,6 @@ export class TokenBlocklistService {
 
   private cleanup(): void {
     const dayStart = new Date(Date.now()).setHours(0, 0, 0, 0).valueOf();
-    this.revokedJWTsMap.forEach((timestamp, jti) =>
-      timestamp < dayStart ? this.revokedJWTsMap.delete(jti) : null,
-    );
+    this.revokedJWTsMap.forEach((timestamp, jti) => (timestamp < dayStart ? this.revokedJWTsMap.delete(jti) : null));
   }
 }

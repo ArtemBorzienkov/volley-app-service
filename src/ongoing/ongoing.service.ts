@@ -13,14 +13,18 @@ import { UpdateOngoingConfigDto } from './dto/update-ongoing-config.dto';
 import { SetOngoingTeamsDto } from './dto/set-ongoing-teams.dto';
 import { AddOngoingTeamDto } from './dto/add-ongoing-team.dto';
 import { UpdateOngoingGameScoreDto } from './dto/update-ongoing-game-score.dto';
+import { AddSoloPlayerDto, FormTeamsFromSoloDto } from './dto/solo-registration.dto';
 import {
   OngoingEventListItemDto,
   OngoingEventResponseDto,
   OngoingGameResponseDto,
   OngoingOpenEventDto,
   OngoingTeamResponseDto,
+  OngoingSoloPlayerDto,
+  OngoingSoloPairPreviewDto,
 } from './dto/ongoing-event-response.dto';
 import { buildGroupPairings, shuffle, packIntoRounds } from './schedule';
+import { effectiveTeamCount, pairByRating } from './pairing';
 import { dealIntoGroups, isPowerOfTwo } from './groups';
 import { buildSeedList, buildBracketGames, rankGroupTeams, Qualifier } from './bracket';
 
@@ -32,6 +36,11 @@ const EVENT_INCLUDE = {
     // ties; id is the tiebreaker the frontend's roster-remount key and index-wise diff rely on.
     orderBy: [{ createdAt: 'asc' as const }, { id: 'asc' as const }],
   },
+  soloPlayers: {
+    include: { player: { include: { playerStats: true } } },
+    // Same reason as teams: a bulk insert stamps one millisecond, so id is the real tiebreak.
+    orderBy: [{ createdAt: 'asc' as const }, { id: 'asc' as const }],
+  },
   games: {
     orderBy: [{ round: 'asc' as const }, { order: 'asc' as const }],
   },
@@ -39,8 +48,9 @@ const EVENT_INCLUDE = {
 
 // A game "has a result" only once BOTH scores are recorded — updateGameScore always writes them
 // together and clearGameResult always nulls them together. assertPlanning (DB count) and findOpen
-// (in-memory scan) must agree on this exact condition, or the Calendar page could list a tournament
-// as open for registration that addTeam then rejects with a 409.
+// (in-memory scan) must agree on this exact condition, or the Calendar page could offer registration
+// on a tournament that addTeam then rejects with a 409. Capacity is deliberately NOT part of that
+// agreement: a full tournament stays listed, and the client disables its registration control.
 // Note: `NOT: { team1Points: null, team2Points: null }` would express "NOT (both null)", i.e. "at
 // least one filled" (De Morgan's law) — not "both filled". ANDing two `{ not: null }` filters is the
 // correct translation of isGamePlayed below.
@@ -65,7 +75,21 @@ export class OngoingService {
     const events = await this.prisma.ongoingEvent.findMany({
       where: { finishedAt: null },
       orderBy: { date: 'desc' },
-      include: { teams: true, games: true },
+      include: {
+        // The list card names the roster and the pool, so the players (and their ratings) come along
+        // rather than the page fanning out to the detail endpoint once per tournament.
+        teams: {
+          include: { player1: { include: { playerStats: true } }, player2: { include: { playerStats: true } } },
+          orderBy: [{ createdAt: 'asc' as const }, { id: 'asc' as const }],
+        },
+        soloPlayers: {
+          include: { player: { include: { playerStats: true } } },
+          orderBy: [{ createdAt: 'asc' as const }, { id: 'asc' as const }],
+        },
+        createdByUser: { select: { id: true, name: true } },
+        config: { select: { visibility: true } },
+        games: true,
+      },
     });
 
     return events.map((event) => ({
@@ -75,9 +99,13 @@ export class OngoingService {
       startTime: event.startTime,
       location: event.location,
       createdByUserId: event.createdByUserId,
+      createdBy: event.createdByUser ? { id: event.createdByUser.id, name: event.createdByUser.name } : null,
+      visibility: event.config?.visibility ?? 'public',
       teamsCount: event.teams.length,
       gamesCount: event.games.length,
       playedCount: event.games.filter((game) => isGamePlayed(game)).length,
+      teams: event.teams.map((team) => this.mapTeam(team)),
+      soloPlayers: event.soloPlayers.map((solo) => this.mapSoloPlayer(solo)),
     }));
   }
 
@@ -116,6 +144,8 @@ export class OngoingService {
       createOngoingEventDto.groupCount,
       createOngoingEventDto.qualifiersPerGroup,
     );
+    const visibility = this.normaliseVisibility(createOngoingEventDto.visibility);
+    const allowSoloRegistration = this.normaliseAllowSolo(createOngoingEventDto.allowSoloRegistration);
 
     if (teams && teams.length) {
       const playerIds = this.validateTeamPairs(teams);
@@ -128,7 +158,18 @@ export class OngoingService {
       startTime,
       location,
       createdByUserId: currentUser.sub,
-      config: { create: { gamesPerPair: 1, courts: 1, maxTeams, scheme, groupCount, qualifiersPerGroup } },
+      config: {
+        create: {
+          gamesPerPair: 1,
+          courts: 1,
+          maxTeams,
+          scheme,
+          groupCount,
+          qualifiersPerGroup,
+          visibility,
+          allowSoloRegistration,
+        },
+      },
     };
 
     if (teams && teams.length) {
@@ -178,11 +219,37 @@ export class OngoingService {
       updateOngoingConfigDto.groupCount,
       updateOngoingConfigDto.qualifiersPerGroup,
     );
+    const visibility = this.normaliseVisibility(updateOngoingConfigDto.visibility);
+    const allowSoloRegistration = this.normaliseAllowSolo(updateOngoingConfigDto.allowSoloRegistration);
+
+    // Otherwise the pool's entrants are stranded behind a UI that no longer renders it.
+    if (!allowSoloRegistration && event.soloPlayers.length) {
+      throw new BadRequestException('Solo registration cannot be turned off while the solo pool is not empty');
+    }
 
     await this.prisma.ongoingEventConfig.upsert({
       where: { eventId: id },
-      create: { eventId: id, gamesPerPair, courts, maxTeams, scheme, groupCount, qualifiersPerGroup },
-      update: { gamesPerPair, courts, maxTeams, scheme, groupCount, qualifiersPerGroup },
+      create: {
+        eventId: id,
+        gamesPerPair,
+        courts,
+        maxTeams,
+        scheme,
+        groupCount,
+        qualifiersPerGroup,
+        visibility,
+        allowSoloRegistration,
+      },
+      update: {
+        gamesPerPair,
+        courts,
+        maxTeams,
+        scheme,
+        groupCount,
+        qualifiersPerGroup,
+        visibility,
+        allowSoloRegistration,
+      },
     });
 
     return this.loadEvent(id);
@@ -216,6 +283,14 @@ export class OngoingService {
           data: teams.map((team) => ({ eventId: id, player1Id: team.player1Id, player2Id: team.player2Id })),
         });
       }
+
+      // Anyone placed into a team leaves the pool — a player is in a team or in the pool, never both.
+      const rosterPlayerIds = teams.flatMap((team) => [team.player1Id, team.player2Id]);
+      if (rosterPlayerIds.length) {
+        await tx.ongoingSoloPlayer.deleteMany({
+          where: { eventId: id, playerId: { in: rosterPlayerIds } },
+        });
+      }
     });
 
     return this.loadEvent(id);
@@ -234,12 +309,20 @@ export class OngoingService {
 
     const { player1Id, player2Id } = addOngoingTeamDto;
 
-    const currentUserRecord = await this.userService.findById(currentUser.sub);
-    if (
-      !currentUserRecord?.playerId ||
-      (currentUserRecord.playerId !== player1Id && currentUserRecord.playerId !== player2Id)
-    ) {
-      throw new BadRequestException('You must register yourself as one of the two players');
+    const isManager = this.canManage(event.createdByUserId, currentUser);
+
+    if (!isManager) {
+      if (event.config.visibility === 'private') {
+        throw new ForbiddenException('This tournament is private; only its creator can add teams');
+      }
+
+      const currentUserRecord = await this.userService.findById(currentUser.sub);
+      if (
+        !currentUserRecord?.playerId ||
+        (currentUserRecord.playerId !== player1Id && currentUserRecord.playerId !== player2Id)
+      ) {
+        throw new BadRequestException('You must register yourself as one of the two players');
+      }
     }
 
     // Validate the newcomer against the whole roster at once, so "already in another team" covers
@@ -256,13 +339,28 @@ export class OngoingService {
       throw new ConflictException('Registration for this tournament has closed');
     }
 
-    if (event.config.maxTeams !== null && event.teams.length >= event.config.maxTeams) {
+    for (const playerId of [player1Id, player2Id]) {
+      if (event.soloPlayers.some((solo) => solo.player.id === playerId)) {
+        throw new ConflictException(`Player ${playerId} is registered without a partner; cancel that first`);
+      }
+    }
+
+    if (
+      event.config.maxTeams !== null &&
+      effectiveTeamCount(event.teams.length + 1, event.soloPlayers.length) > event.config.maxTeams
+    ) {
       throw new ConflictException('This tournament is full');
     }
 
     await this.assertPlayersExist([player1Id, player2Id]);
 
-    await this.prisma.ongoingTeam.create({ data: { eventId: id, player1Id, player2Id } });
+    await this.prisma.$transaction(async (tx) => {
+      await tx.ongoingTeam.create({ data: { eventId: id, player1Id, player2Id } });
+      // Closes the race where a solo registration lands between the read above and this write.
+      await tx.ongoingSoloPlayer.deleteMany({
+        where: { eventId: id, playerId: { in: [player1Id, player2Id] } },
+      });
+    });
 
     return this.loadEvent(id);
   }
@@ -280,8 +378,10 @@ export class OngoingService {
       if (hasResult) continue;
       if (!this.isRegistrationDateOpen(event.date)) continue;
 
+      // A full tournament is NOT filtered out: the calendar lists it with registration disabled and a
+      // "no spots left" note. maxTeams, teamsCount and soloPlayers all travel in the payload so the
+      // client can work out fullness itself; addTeam stays the enforcement point.
       const maxTeams = event.config ? event.config.maxTeams : null;
-      if (maxTeams !== null && maxTeams !== undefined && event.teams.length >= maxTeams) continue;
 
       open.push({
         id: event.id,
@@ -291,7 +391,14 @@ export class OngoingService {
         location: event.location,
         maxTeams: maxTeams === undefined ? null : maxTeams,
         teamsCount: event.teams.length,
+        // The calendar needs the owner to decide whether to render a Register control on a private
+        // tournament, so this mirrors OngoingEventListItemDto rather than being derived client-side.
+        createdByUserId: event.createdByUserId ?? null,
         teams: event.teams.map((team) => this.mapTeam(team)),
+        visibility: event.config && event.config.visibility !== undefined ? event.config.visibility : 'public',
+        allowSoloRegistration:
+          event.config && event.config.allowSoloRegistration !== undefined ? event.config.allowSoloRegistration : false,
+        soloPlayers: event.soloPlayers.map((solo) => this.mapSoloPlayer(solo)),
       });
     }
 
@@ -299,13 +406,22 @@ export class OngoingService {
   }
 
   async removeTeam(teamId: string, currentUser: JwtPayload): Promise<OngoingEventResponseDto> {
-    const team = await this.prisma.ongoingTeam.findUnique({ where: { id: teamId } });
+    const team = await this.prisma.ongoingTeam.findUnique({
+      where: { id: teamId },
+      include: { event: { select: { createdByUserId: true, date: true } } },
+    });
 
     if (!team) {
       throw new NotFoundException(`Ongoing team with ID ${teamId} not found`);
     }
 
-    await this.assertCanManageEvent(team.eventId, currentUser);
+    // Either member may withdraw the pair until the day before; the manager is not bound by that.
+    await this.assertOwnEntryOrManager(
+      team.event.createdByUserId,
+      team.event.date,
+      [team.player1Id, team.player2Id],
+      currentUser,
+    );
     await this.assertPlanning(team.eventId);
 
     // ongoing_games -> ongoing_teams is ON DELETE CASCADE, and in planning every fixture is unplayed,
@@ -313,6 +429,143 @@ export class OngoingService {
     await this.prisma.ongoingTeam.delete({ where: { id: teamId } });
 
     return this.loadEvent(team.eventId);
+  }
+
+  async addSoloPlayer(
+    id: string,
+    addSoloPlayerDto: AddSoloPlayerDto,
+    currentUser: JwtPayload,
+  ): Promise<OngoingEventResponseDto> {
+    const event = await this.loadEvent(id);
+    const isManager = this.canManage(event.createdByUserId, currentUser);
+
+    if (!isManager && event.config.visibility === 'private') {
+      throw new ForbiddenException('This tournament is private; only its creator can add entrants');
+    }
+    if (!event.config.allowSoloRegistration) {
+      throw new ConflictException('This tournament does not accept registration without a partner');
+    }
+
+    const requestedPlayerId = addSoloPlayerDto ? addSoloPlayerDto.playerId : undefined;
+    let playerId: string;
+
+    if (isManager && requestedPlayerId) {
+      playerId = requestedPlayerId;
+    } else {
+      const currentUserRecord = await this.userService.findById(currentUser.sub);
+      if (!currentUserRecord?.playerId || (requestedPlayerId && requestedPlayerId !== currentUserRecord.playerId)) {
+        throw new BadRequestException('You can only register yourself without a partner');
+      }
+      playerId = currentUserRecord.playerId;
+    }
+
+    await this.assertPlanning(id);
+
+    if (!this.isRegistrationDateOpen(event.date)) {
+      throw new ConflictException('Registration for this tournament has closed');
+    }
+
+    // The one-entry invariant: a player is in a team or in the pool, never both.
+    const onRoster = event.teams.some((team) => team.player1.id === playerId || team.player2.id === playerId);
+    if (onRoster) {
+      throw new ConflictException(`Player ${playerId} is already in a team in this tournament`);
+    }
+    if (event.soloPlayers.some((solo) => solo.player.id === playerId)) {
+      throw new ConflictException(`Player ${playerId} is already registered without a partner`);
+    }
+
+    if (
+      event.config.maxTeams !== null &&
+      effectiveTeamCount(event.teams.length, event.soloPlayers.length + 1) > event.config.maxTeams
+    ) {
+      throw new ConflictException('This tournament is full');
+    }
+
+    await this.assertPlayersExist([playerId]);
+    await this.prisma.ongoingSoloPlayer.create({ data: { eventId: id, playerId } });
+
+    return this.loadEvent(id);
+  }
+
+  async removeSoloPlayer(soloId: string, currentUser: JwtPayload): Promise<OngoingEventResponseDto> {
+    const solo = await this.prisma.ongoingSoloPlayer.findUnique({
+      where: { id: soloId },
+      include: { event: { select: { createdByUserId: true, date: true } } },
+    });
+
+    if (!solo) {
+      throw new NotFoundException(`Solo registration with ID ${soloId} not found`);
+    }
+
+    await this.assertOwnEntryOrManager(solo.event.createdByUserId, solo.event.date, [solo.playerId], currentUser);
+    await this.assertPlanning(solo.eventId);
+
+    await this.prisma.ongoingSoloPlayer.delete({ where: { id: soloId } });
+
+    return this.loadEvent(solo.eventId);
+  }
+
+  async previewSoloPairing(id: string, currentUser: JwtPayload): Promise<OngoingSoloPairPreviewDto> {
+    const event = await this.loadEvent(id);
+    this.assertCanManage(event.createdByUserId, currentUser);
+
+    const byPlayerId = new Map(event.soloPlayers.map((solo) => [solo.player.id, solo]));
+    const { pairs, unpaired } = pairByRating(
+      event.soloPlayers.map((solo) => ({ playerId: solo.player.id, rating: solo.rating })),
+    );
+
+    return {
+      pairs: pairs.map((pair) => {
+        const first = byPlayerId.get(pair.player1Id);
+        const second = byPlayerId.get(pair.player2Id);
+        return {
+          player1: first.player,
+          player2: second.player,
+          rating: first.rating + second.rating,
+        };
+      }),
+      unpaired: unpaired.map((playerId) => byPlayerId.get(playerId).player),
+    };
+  }
+
+  async formTeamsFromSolo(
+    id: string,
+    formTeamsFromSoloDto: FormTeamsFromSoloDto,
+    currentUser: JwtPayload,
+  ): Promise<OngoingEventResponseDto> {
+    const event = await this.loadEvent(id);
+    this.assertCanManage(event.createdByUserId, currentUser);
+
+    if (!formTeamsFromSoloDto || !Array.isArray(formTeamsFromSoloDto.teams)) {
+      throw new BadRequestException('teams must be an array');
+    }
+
+    const teams = formTeamsFromSoloDto.teams;
+    // Reuses the roster validator, so "same player twice" and "a team of one" read identically here
+    // and in setTeams.
+    const playerIds = this.validateTeamPairs(teams);
+
+    await this.assertPlanning(id);
+
+    const poolIds = new Set(event.soloPlayers.map((solo) => solo.player.id));
+    for (const playerId of playerIds) {
+      if (!poolIds.has(playerId)) {
+        throw new BadRequestException(`Player ${playerId} is not registered without a partner in this tournament`);
+      }
+    }
+
+    if (!teams.length) return this.loadEvent(id);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.ongoingTeam.createMany({
+        data: teams.map((team) => ({ eventId: id, player1Id: team.player1Id, player2Id: team.player2Id })),
+      });
+      // Pool rows go second: the teams they became must exist before the pool forgets them, so a
+      // failure can never leave an entrant in neither place.
+      await tx.ongoingSoloPlayer.deleteMany({ where: { eventId: id, playerId: { in: playerIds } } });
+    });
+
+    return this.loadEvent(id);
   }
 
   // The tournament's own date is the deadline: registration stays open through the whole of that day.
@@ -326,6 +579,19 @@ export class OngoingService {
     const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
 
     return eventDay >= today;
+  }
+
+  // Withdrawing yourself closes at the end of the day BEFORE the tournament — on the day itself the
+  // organiser is already building a schedule around you. Same UTC-day comparison as registration, so
+  // a date-only value is judged identically regardless of the server's local timezone.
+  private isCancellationOpen(date: Date): boolean {
+    const eventDate = new Date(date);
+    const now = new Date();
+
+    const eventDay = Date.UTC(eventDate.getUTCFullYear(), eventDate.getUTCMonth(), eventDate.getUTCDate());
+    const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+
+    return today < eventDay;
   }
 
   async generateSchedule(id: string, currentUser: JwtPayload): Promise<OngoingEventResponseDto> {
@@ -745,6 +1011,25 @@ export class OngoingService {
     return { scheme: resolved, groupCount: groups, qualifiersPerGroup };
   }
 
+  private normaliseVisibility(value: string | undefined | null): string {
+    const resolved = value === undefined || value === null ? 'public' : value;
+
+    if (resolved !== 'public' && resolved !== 'private') {
+      throw new BadRequestException('visibility must be public or private');
+    }
+
+    return resolved;
+  }
+
+  private normaliseAllowSolo(value: boolean | undefined | null): boolean {
+    if (value === undefined || value === null) return false;
+    if (typeof value !== 'boolean') {
+      throw new BadRequestException('allowSoloRegistration must be a boolean');
+    }
+
+    return value;
+  }
+
   private normaliseMaxTeams(value: number | undefined | null, currentTeamCount: number): number | null {
     if (value === undefined || value === null) return null;
     if (!Number.isInteger(value) || value < 2) {
@@ -777,11 +1062,35 @@ export class OngoingService {
     return value.trim() || null;
   }
 
-  private assertCanManage(createdByUserId: string | null, currentUser: JwtPayload): void {
+  private canManage(createdByUserId: string | null, currentUser: JwtPayload): boolean {
     const isCreator = createdByUserId !== null && createdByUserId === currentUser.sub;
-    const isAdmin = currentUser.role === 'admin';
-    if (!isCreator && !isAdmin) {
+    return isCreator || currentUser.role === 'admin';
+  }
+
+  private assertCanManage(createdByUserId: string | null, currentUser: JwtPayload): void {
+    if (!this.canManage(createdByUserId, currentUser)) {
       throw new ForbiddenException('Only the tournament creator or an admin can do this');
+    }
+  }
+
+  // A manager may withdraw anybody at any time; an entrant may withdraw only themselves, and only
+  // while the cancellation window is open.
+  private async assertOwnEntryOrManager(
+    createdByUserId: string | null,
+    eventDate: Date,
+    entryPlayerIds: string[],
+    currentUser: JwtPayload,
+  ): Promise<void> {
+    if (this.canManage(createdByUserId, currentUser)) return;
+
+    const currentUserRecord = await this.userService.findById(currentUser.sub);
+    const playerId = currentUserRecord?.playerId;
+
+    if (!playerId || !entryPlayerIds.includes(playerId)) {
+      throw new ForbiddenException('You can only cancel your own registration');
+    }
+    if (!this.isCancellationOpen(eventDate)) {
+      throw new ForbiddenException('Registration can no longer be cancelled — the deadline was the day before');
     }
   }
 
@@ -860,6 +1169,14 @@ export class OngoingService {
     return this.mapEvent(event);
   }
 
+  private mapSoloPlayer(solo: any): OngoingSoloPlayerDto {
+    return {
+      id: solo.id,
+      player: { id: solo.player.id, name: solo.player.name, avatar: solo.player.avatar },
+      rating: solo.player.playerStats?.rank ?? 1000,
+    };
+  }
+
   private mapEvent(event: any): OngoingEventResponseDto {
     return {
       id: event.id,
@@ -880,8 +1197,12 @@ export class OngoingService {
         groupCount: event.config && event.config.groupCount !== undefined ? event.config.groupCount : 1,
         qualifiersPerGroup:
           event.config && event.config.qualifiersPerGroup !== undefined ? event.config.qualifiersPerGroup : null,
+        visibility: event.config && event.config.visibility !== undefined ? event.config.visibility : 'public',
+        allowSoloRegistration:
+          event.config && event.config.allowSoloRegistration !== undefined ? event.config.allowSoloRegistration : false,
       },
       teams: (event.teams || []).map((team) => this.mapTeam(team)),
+      soloPlayers: (event.soloPlayers || []).map((solo) => this.mapSoloPlayer(solo)),
       games: (event.games || []).map((game) => this.mapGame(game)),
     };
   }

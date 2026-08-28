@@ -1,15 +1,30 @@
-import { Controller, Get, Post, Put, Patch, Body, Param, Delete, HttpCode, HttpStatus, Req, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Patch,
+  Body,
+  Param,
+  Delete,
+  HttpCode,
+  HttpStatus,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { OngoingService } from './ongoing.service';
 import { CreateOngoingEventDto } from './dto/create-ongoing-event.dto';
 import { UpdateOngoingConfigDto } from './dto/update-ongoing-config.dto';
 import { SetOngoingTeamsDto } from './dto/set-ongoing-teams.dto';
 import { AddOngoingTeamDto } from './dto/add-ongoing-team.dto';
 import { UpdateOngoingGameScoreDto } from './dto/update-ongoing-game-score.dto';
+import { AddSoloPlayerDto, FormTeamsFromSoloDto } from './dto/solo-registration.dto';
 import {
   OngoingEventListItemDto,
   OngoingEventResponseDto,
   OngoingGameResponseDto,
   OngoingOpenEventDto,
+  OngoingSoloPairPreviewDto,
 } from './dto/ongoing-event-response.dto';
 import { JwtAuthGuard } from '../auth-guards';
 import type { AuthedRequest } from '../auth-guards';
@@ -91,6 +106,42 @@ export class OngoingController {
   @UseGuards(JwtAuthGuard)
   async removeTeam(@Param('teamId') teamId: string, @Req() req: AuthedRequest): Promise<OngoingEventResponseDto> {
     return this.ongoingService.removeTeam(teamId, req.user);
+  }
+
+  // Declared above @Get(':id') to match how @Get('open') is placed. A literal-vs-`:id` collision only
+  // bites when the segment counts are equal, which is not the case for these two.
+  @Post(':id/solo')
+  @HttpCode(HttpStatus.CREATED)
+  @UseGuards(JwtAuthGuard)
+  async addSoloPlayer(
+    @Param('id') id: string,
+    @Body() addSoloPlayerDto: AddSoloPlayerDto,
+    @Req() req: AuthedRequest,
+  ): Promise<OngoingEventResponseDto> {
+    return this.ongoingService.addSoloPlayer(id, addSoloPlayerDto, req.user);
+  }
+
+  @Delete('solo/:soloId')
+  @UseGuards(JwtAuthGuard)
+  async removeSoloPlayer(@Param('soloId') soloId: string, @Req() req: AuthedRequest): Promise<OngoingEventResponseDto> {
+    return this.ongoingService.removeSoloPlayer(soloId, req.user);
+  }
+
+  @Get(':id/solo/preview')
+  @UseGuards(JwtAuthGuard)
+  async previewSoloPairing(@Param('id') id: string, @Req() req: AuthedRequest): Promise<OngoingSoloPairPreviewDto> {
+    return this.ongoingService.previewSoloPairing(id, req.user);
+  }
+
+  @Post(':id/solo/form-teams')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  async formTeamsFromSolo(
+    @Param('id') id: string,
+    @Body() formTeamsFromSoloDto: FormTeamsFromSoloDto,
+    @Req() req: AuthedRequest,
+  ): Promise<OngoingEventResponseDto> {
+    return this.ongoingService.formTeamsFromSolo(id, formTeamsFromSoloDto, req.user);
   }
 
   @Get('open')

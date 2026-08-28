@@ -20,11 +20,11 @@ model Player {
   createdAt DateTime @default(now()) @map("created_at")
 
   // Relations - games where player is in team1
-  team1GamesAsPlayer1   Game[]           @relation("Team1Player1")
-  team1GamesAsPlayer2   Game[]           @relation("Team1Player2")
+  team1GamesAsPlayer1   Game[]              @relation("Team1Player1")
+  team1GamesAsPlayer2   Game[]              @relation("Team1Player2")
   // Relations - games where player is in team2
-  team2GamesAsPlayer1   Game[]           @relation("Team2Player1")
-  team2GamesAsPlayer2   Game[]           @relation("Team2Player2")
+  team2GamesAsPlayer1   Game[]              @relation("Team2Player1")
+  team2GamesAsPlayer2   Game[]              @relation("Team2Player2")
   // Relations - event memberships
   eventMembers          EventMember[]
   // Relations - created events
@@ -34,10 +34,12 @@ model Player {
   // Relations - game player ranks
   gamePlayerRanks       GamePlayerRank[]
   // Relations - ongoing tournament teams
-  ongoingTeamsAsPlayer1 OngoingTeam[]    @relation("OngoingTeamPlayer1")
-  ongoingTeamsAsPlayer2 OngoingTeam[]    @relation("OngoingTeamPlayer2")
+  ongoingTeamsAsPlayer1 OngoingTeam[]       @relation("OngoingTeamPlayer1")
+  ongoingTeamsAsPlayer2 OngoingTeam[]       @relation("OngoingTeamPlayer2")
+  // Relations - solo (partnerless) tournament registrations
+  ongoingSoloEntries    OngoingSoloPlayer[] @relation("OngoingSoloPlayer")
   // Relations - auth account linked to this player (optional, 1:1)
-  user User?
+  user                  User?
 
   @@index([tgId])
   @@map("players")
@@ -151,9 +153,10 @@ model OngoingEvent {
   createdByUserId String? @map("created_by_user_id")
   createdByUser   User?   @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
 
-  config OngoingEventConfig?
-  teams  OngoingTeam[]
-  games  OngoingGame[]
+  config      OngoingEventConfig?
+  teams       OngoingTeam[]
+  games       OngoingGame[]
+  soloPlayers OngoingSoloPlayer[]
 
   @@index([date])
   @@map("ongoing_events")
@@ -168,6 +171,9 @@ model OngoingEventConfig {
   scheme             String @default("roundRobin")
   groupCount         Int    @default(1) @map("group_count")
   qualifiersPerGroup Int?   @map("qualifiers_per_group")
+
+  visibility            String  @default("public")
+  allowSoloRegistration Boolean @default(false) @map("allow_solo_registration")
 
   event OngoingEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
@@ -191,6 +197,20 @@ model OngoingTeam {
 
   @@index([eventId])
   @@map("ongoing_teams")
+}
+
+model OngoingSoloPlayer {
+  id        String   @id @default(uuid())
+  eventId   String   @map("event_id")
+  playerId  String   @map("player_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  event  OngoingEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  player Player       @relation("OngoingSoloPlayer", fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, playerId])
+  @@index([eventId])
+  @@map("ongoing_solo_players")
 }
 
 model OngoingGame {

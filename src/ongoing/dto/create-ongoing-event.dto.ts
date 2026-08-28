@@ -1,4 +1,4 @@
-import { IsString, IsDateString, IsOptional, IsArray, IsInt } from 'class-validator';
+import { IsString, IsDateString, IsOptional, IsArray, IsInt, IsBoolean } from 'class-validator';
 
 export class CreateOngoingEventDto {
   @IsString()
@@ -34,4 +34,12 @@ export class CreateOngoingEventDto {
   @IsOptional()
   @IsInt()
   qualifiersPerGroup?: number;
+
+  @IsOptional()
+  @IsString()
+  visibility?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  allowSoloRegistration?: boolean;
 }
