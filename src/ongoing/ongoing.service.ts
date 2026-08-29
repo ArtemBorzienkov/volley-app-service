@@ -368,7 +368,7 @@ export class OngoingService {
   async findOpen(): Promise<OngoingOpenEventDto[]> {
     const events = await this.prisma.ongoingEvent.findMany({
       orderBy: { date: 'asc' },
-      include: EVENT_INCLUDE,
+      include: { ...EVENT_INCLUDE, createdByUser: { select: { id: true, name: true } } },
     });
 
     const open: OngoingOpenEventDto[] = [];
@@ -394,6 +394,7 @@ export class OngoingService {
         // The calendar needs the owner to decide whether to render a Register control on a private
         // tournament, so this mirrors OngoingEventListItemDto rather than being derived client-side.
         createdByUserId: event.createdByUserId ?? null,
+        createdBy: event.createdByUser ? { id: event.createdByUser.id, name: event.createdByUser.name } : null,
         teams: event.teams.map((team) => this.mapTeam(team)),
         visibility: event.config && event.config.visibility !== undefined ? event.config.visibility : 'public',
         allowSoloRegistration:

@@ -106,6 +106,9 @@ export class OngoingOpenEventDto {
   maxTeams: number | null;
   teamsCount: number;
   createdByUserId: string | null;
+  // The account behind the tournament, so the calendar card can name the organiser without a
+  // second request. Null once that account is deleted (the FK is ON DELETE SET NULL).
+  createdBy: OngoingEventCreatorDto | null;
   teams: OngoingTeamResponseDto[];
   visibility: string;
   allowSoloRegistration: boolean;

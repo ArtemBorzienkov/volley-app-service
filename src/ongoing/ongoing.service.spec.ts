@@ -1787,6 +1787,7 @@ describe('OngoingService', () => {
       name: 'n',
       date: future,
       createdByUserId: 'user-1',
+      createdByUser: { id: 'user-1', name: 'Ann Organiser' },
       config: { gamesPerPair: 1, courts: 1, maxTeams: null, visibility: 'public', allowSoloRegistration: false },
       teams: [team],
       soloPlayers: [],
@@ -1841,6 +1842,8 @@ describe('OngoingService', () => {
       expect(result[0].teams[0].player1.name).toBe('A');
       // The calendar decides whether to offer registration on a private tournament from this field.
       expect(result[0].createdByUserId).toBe('user-1');
+      // The calendar card names the organiser, so the account travels with the open-events payload.
+      expect(result[0].createdBy).toEqual({ id: 'user-1', name: 'Ann Organiser' });
       expect(result[0].visibility).toBe('public');
       expect(result[0].allowSoloRegistration).toBe(false);
     });
