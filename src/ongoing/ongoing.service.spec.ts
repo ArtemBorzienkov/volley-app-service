@@ -37,6 +37,7 @@ function buildPrismaMock() {
       update: jest.fn(async (args: any) => args),
     },
     ongoingGame: {
+      create: jest.fn(async (args: any) => ({ id: 'game-new', ...args.data })),
       createMany: jest.fn(async () => ({ count: 0 })),
       deleteMany: jest.fn(async () => ({ count: 0 })),
       findUnique: jest.fn(async () => null as any),
@@ -54,6 +55,12 @@ function buildPrismaMock() {
       findUnique: jest.fn(async () => null as any),
       findMany: jest.fn(async () => []),
       delete: jest.fn(async () => ({})),
+    },
+    ongoingRotationSlot: {
+      create: jest.fn(async () => ({ id: 'slot-1' })),
+      createMany: jest.fn(async () => ({ count: 0 })),
+      deleteMany: jest.fn(async () => ({ count: 0 })),
+      findMany: jest.fn(async () => []),
     },
     player: {
       findMany: jest.fn(async () => []),
@@ -104,6 +111,7 @@ describe('OngoingService', () => {
               scheme: 'roundRobin',
               groupCount: 1,
               qualifiersPerGroup: null,
+              rotationRounds: 3,
               visibility: 'public',
               allowSoloRegistration: false,
             },
@@ -158,6 +166,7 @@ describe('OngoingService', () => {
         scheme: 'roundRobin',
         groupCount: 1,
         qualifiersPerGroup: null,
+        rotationRounds: 3,
       });
       expect(result.teams).toEqual([]);
       expect(result.games).toEqual([]);
@@ -212,6 +221,7 @@ describe('OngoingService', () => {
           scheme: 'roundRobin',
           groupCount: 1,
           qualifiersPerGroup: null,
+          rotationRounds: 3,
           visibility: 'public',
           allowSoloRegistration: false,
         },
@@ -222,6 +232,7 @@ describe('OngoingService', () => {
           scheme: 'roundRobin',
           groupCount: 1,
           qualifiersPerGroup: null,
+          rotationRounds: 3,
           visibility: 'public',
           allowSoloRegistration: false,
         },
@@ -1843,7 +1854,7 @@ describe('OngoingService', () => {
       // The calendar decides whether to offer registration on a private tournament from this field.
       expect(result[0].createdByUserId).toBe('user-1');
       // The calendar card names the organiser, so the account travels with the open-events payload.
-      expect(result[0].createdBy).toEqual({ id: 'user-1', name: 'Ann Organiser' });
+      expect(result[0].createdBy).toEqual({ id: 'user-1', name: 'Ann Organiser', isAnonymous: false });
       expect(result[0].visibility).toBe('public');
       expect(result[0].allowSoloRegistration).toBe(false);
     });
@@ -1922,6 +1933,7 @@ describe('OngoingService', () => {
         scheme: 'roundRobin',
         groupCount: 1,
         qualifiersPerGroup: null,
+        rotationRounds: 3,
         visibility: 'public',
         allowSoloRegistration: false,
       });
@@ -2071,9 +2083,10 @@ describe('OngoingService', () => {
 
       const args = (prisma.ongoingEvent.findUnique as jest.Mock).mock.calls[0][0];
       expect(args.include.teams.orderBy).toEqual([{ createdAt: 'asc' }, { id: 'asc' }]);
+      // playerStats feeds the rating; the user select feeds the display-anonymity flag.
       expect(args.include.teams.include).toEqual({
-        player1: { include: { playerStats: true } },
-        player2: { include: { playerStats: true } },
+        player1: { include: { playerStats: true, user: { select: { isAnonymous: true } } } },
+        player2: { include: { playerStats: true, user: { select: { isAnonymous: true } } } },
       });
     });
   });
@@ -2115,7 +2128,7 @@ describe('OngoingService', () => {
     it('rejects an unknown scheme', async () => {
       await expect(
         service.updateConfig('event-1', { gamesPerPair: 1, courts: 1, scheme: 'ladder' } as any, CURRENT_USER),
-      ).rejects.toThrow(new BadRequestException('scheme must be roundRobin or groupsPlayoff'));
+      ).rejects.toThrow(new BadRequestException('scheme must be roundRobin, groupsPlayoff or fullRotation'));
     });
 
     it('forces roundRobin to a single group with no qualifiers', async () => {
@@ -2298,6 +2311,7 @@ describe('OngoingService', () => {
               scheme: 'roundRobin',
               groupCount: 1,
               qualifiersPerGroup: null,
+              rotationRounds: 3,
             },
             teams: teams(4),
           } as any),
@@ -2399,6 +2413,7 @@ describe('OngoingService', () => {
               scheme: 'roundRobin',
               groupCount: 1,
               qualifiersPerGroup: null,
+              rotationRounds: 3,
               visibility: 'public',
               allowSoloRegistration: false,
             },
@@ -2717,16 +2732,16 @@ describe('OngoingService', () => {
       expect(item.teams).toEqual([
         {
           id: 'team-1',
-          player1: { id: 'p1', name: 'Ann', avatar: null },
-          player2: { id: 'p2', name: 'Bob', avatar: null },
+          player1: { id: 'p1', name: 'Ann', avatar: null, isAnonymous: false },
+          player2: { id: 'p2', name: 'Bob', avatar: null, isAnonymous: false },
           rating: 2100,
           groupIndex: null,
         },
       ]);
       expect(item.soloPlayers).toEqual([
-        { id: 'solo-1', player: { id: 'p3', name: 'Cid', avatar: null }, rating: 1000 },
+        { id: 'solo-1', player: { id: 'p3', name: 'Cid', avatar: null, isAnonymous: false }, rating: 1000 },
       ]);
-      expect(item.createdBy).toEqual({ id: 'user-1', name: 'Ann Organiser' });
+      expect(item.createdBy).toEqual({ id: 'user-1', name: 'Ann Organiser', isAnonymous: false });
       expect(item.visibility).toBe('public');
     });
 
@@ -2943,8 +2958,8 @@ describe('OngoingService', () => {
       const event = await service.findOne('event-1');
 
       expect(event.soloPlayers).toEqual([
-        { id: 'solo-1', player: { id: 'p1', name: 'Ann', avatar: null }, rating: 1300 },
-        { id: 'solo-2', player: { id: 'p2', name: 'Bob', avatar: null }, rating: 1000 },
+        { id: 'solo-1', player: { id: 'p1', name: 'Ann', avatar: null, isAnonymous: false }, rating: 1300 },
+        { id: 'solo-2', player: { id: 'p2', name: 'Bob', avatar: null, isAnonymous: false }, rating: 1000 },
       ]);
     });
 
@@ -3470,5 +3485,715 @@ describe('OngoingService', () => {
         }),
       ).rejects.toThrow(ForbiddenException);
     });
+  });
+});
+
+describe('OngoingService fullRotation', () => {
+  let service: OngoingService;
+  let prisma: any;
+  let userService: { findById: jest.Mock };
+
+  const CURRENT_USER = { sub: 'user-1', email: 'user1@example.com', role: 'admin', jti: 'jti-1', iat: 0, exp: 0 };
+
+  /** Eight players, descending rating, so seeding is predictable. */
+  const soloRoster = (count: number) =>
+    Array.from({ length: count }, (_, index) => ({
+      id: `solo-${index + 1}`,
+      player: {
+        id: `p${index + 1}`,
+        name: `Player ${index + 1}`,
+        avatar: null,
+        playerStats: { rank: 2000 - index * 100 },
+      },
+    }));
+
+  const slotsFor = (round: number, groups: string[][]) =>
+    groups.flatMap((group, groupIndex) =>
+      group.map((playerId) => ({
+        id: `slot-${round}-${playerId}`,
+        playerId,
+        round,
+        groupIndex,
+        player: { id: playerId, name: playerId.toUpperCase(), avatar: null, playerStats: { rank: 1000 } },
+      })),
+    );
+
+  /** The three fixtures of one group, with the scores given (null for "not played"). */
+  const gamesFor = (round: number, groupIndex: number, group: string[], scores: Array<[number, number] | null>) => {
+    const [a, b, c, d] = group;
+    const sides: Array<[string[], string[]]> = [
+      [[a, b], [c, d]],
+      [[a, c], [b, d]],
+      [[a, d], [b, c]],
+    ];
+    return sides.map(([side1, side2], index) => ({
+      id: `g-${round}-${groupIndex}-${index}`,
+      eventId: 'event-1',
+      team1Id: null,
+      team2Id: null,
+      team1Points: scores[index] ? scores[index][0] : null,
+      team2Points: scores[index] ? scores[index][1] : null,
+      round,
+      court: index + 1,
+      order: index,
+      phase: 'rotation',
+      groupIndex,
+      bracketRound: null,
+      bracketSlot: null,
+      thirdPlace: false,
+      sidePlayers: [
+        ...side1.map((playerId) => ({ playerId, side: 1, player: { id: playerId, name: playerId, avatar: null } })),
+        ...side2.map((playerId) => ({ playerId, side: 2, player: { id: playerId, name: playerId, avatar: null } })),
+      ],
+    }));
+  };
+
+  const buildEvent = (overrides: Record<string, unknown> = {}) => ({
+    id: 'event-1',
+    name: 'Rotation Cup',
+    date: new Date('2026-09-20T00:00:00.000Z'),
+    createdAt: new Date('2026-09-01T00:00:00.000Z'),
+    updatedAt: new Date('2026-09-01T00:00:00.000Z'),
+    createdByUserId: 'user-1',
+    config: {
+      gamesPerPair: 1,
+      courts: 1,
+      maxTeams: null,
+      scheme: 'fullRotation',
+      groupCount: 2,
+      qualifiersPerGroup: null,
+      rotationRounds: 3,
+      visibility: 'public',
+      allowSoloRegistration: true,
+    },
+    teams: [],
+    soloPlayers: soloRoster(8),
+    games: [],
+    rotationSlots: [],
+    ...overrides,
+  });
+
+  const load = (event: any) => {
+    prisma.ongoingEvent.findUnique = jest.fn(async () => event);
+  };
+
+  beforeEach(async () => {
+    prisma = {
+      ongoingEvent: { findUnique: jest.fn(async () => buildEvent()) },
+      ongoingTeam: { create: jest.fn(), deleteMany: jest.fn(async () => ({ count: 0 })) },
+      ongoingGame: {
+        create: jest.fn(async (args: any) => ({ id: 'game-new', ...args.data })),
+        deleteMany: jest.fn(async () => ({ count: 0 })),
+        count: jest.fn(async () => 0),
+      },
+      ongoingSoloPlayer: { create: jest.fn(async () => ({ id: 'solo-new' })) },
+      ongoingRotationSlot: {
+        create: jest.fn(async (args: any) => ({ id: 'slot-new', ...args.data })),
+        deleteMany: jest.fn(async () => ({ count: 0 })),
+      },
+      ongoingEventConfig: { upsert: jest.fn(async () => ({})) },
+      player: { findMany: jest.fn(async (args: any) => args.where.id.in.map((id: string) => ({ id }))) },
+      $transaction: jest.fn(),
+    };
+    prisma.$transaction = jest.fn(async (cb: any) => cb(prisma));
+    userService = { findById: jest.fn(async () => ({ playerId: 'p1' } as any)) };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        OngoingService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: UserService, useValue: userService },
+      ],
+    }).compile();
+
+    service = module.get<OngoingService>(OngoingService);
+  });
+
+  describe('registration', () => {
+    it('refuses a team: the scheme registers individual players', async () => {
+      await expect(
+        service.addTeam('event-1', { player1Id: 'p1', player2Id: 'p2' }, CURRENT_USER),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.ongoingTeam.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses a player past the seats the groups define, ignoring maxTeams', async () => {
+      load(buildEvent({ soloPlayers: soloRoster(8) }));
+
+      await expect(service.addSoloPlayer('event-1', { playerId: 'p9' }, CURRENT_USER)).rejects.toThrow(
+        new ConflictException('This tournament is full'),
+      );
+    });
+
+    it('accepts a player while a seat is free', async () => {
+      load(buildEvent({ soloPlayers: soloRoster(7) }));
+
+      await service.addSoloPlayer('event-1', { playerId: 'p9' }, CURRENT_USER);
+
+      expect(prisma.ongoingSoloPlayer.create).toHaveBeenCalledWith({
+        data: { eventId: 'event-1', playerId: 'p9' },
+      });
+    });
+  });
+
+  describe('generateSchedule', () => {
+    it('refuses a roster that does not fill every group exactly', async () => {
+      load(buildEvent({ soloPlayers: soloRoster(7) }));
+
+      await expect(service.generateSchedule('event-1', CURRENT_USER)).rejects.toThrow(
+        /needs exactly 8 registered players, and this one has 7/,
+      );
+      expect(prisma.ongoingGame.create).not.toHaveBeenCalled();
+    });
+
+    it('seeds the strongest four into group 0 and writes a slot per player', async () => {
+      // Rating runs opposite to the ids, so neither the roster's own order nor the playerId tiebreak
+      // can produce the expected groups — only reading the rating can.
+      const inverted = Array.from({ length: 8 }, (_, index) => ({
+        id: `solo-${index + 1}`,
+        player: {
+          id: `p${index + 1}`,
+          name: `Player ${index + 1}`,
+          avatar: null,
+          playerStats: { rank: 1000 + index * 100 },
+        },
+      }));
+      load(buildEvent({ soloPlayers: inverted }));
+
+      await service.generateSchedule('event-1', CURRENT_USER);
+
+      const slots = prisma.ongoingRotationSlot.create.mock.calls.map((call: any) => call[0].data);
+      expect(slots).toHaveLength(8);
+      expect(slots.filter((slot: any) => slot.groupIndex === 0).map((slot: any) => slot.playerId)).toEqual([
+        'p8',
+        'p7',
+        'p6',
+        'p5',
+      ]);
+      expect(slots.every((slot: any) => slot.round === 1)).toBe(true);
+    });
+
+    it('writes three fixtures per group, each with two players on each side', async () => {
+      await service.generateSchedule('event-1', CURRENT_USER);
+
+      const games = prisma.ongoingGame.create.mock.calls.map((call: any) => call[0].data);
+      expect(games).toHaveLength(6);
+      expect(games.every((game: any) => game.phase === 'rotation' && game.round === 1)).toBe(true);
+      expect(games.filter((game: any) => game.groupIndex === 0)).toHaveLength(3);
+
+      for (const game of games) {
+        const created = game.sidePlayers.create;
+        expect(created.filter((entry: any) => entry.side === 1)).toHaveLength(2);
+        expect(created.filter((entry: any) => entry.side === 2)).toHaveLength(2);
+      }
+    });
+
+    it('replaces only the round it writes, so earlier results survive a regenerate', async () => {
+      await service.generateSchedule('event-1', CURRENT_USER);
+
+      expect(prisma.ongoingGame.deleteMany).toHaveBeenCalledWith({
+        where: { eventId: 'event-1', phase: 'rotation', round: 1 },
+      });
+      expect(prisma.ongoingRotationSlot.deleteMany).toHaveBeenCalledWith({
+        where: { eventId: 'event-1', round: 1 },
+      });
+    });
+  });
+
+  describe('advanceRotationRound', () => {
+    const groupA = ['p1', 'p2', 'p3', 'p4'];
+    const groupB = ['p5', 'p6', 'p7', 'p8'];
+
+    /** Round 1 played so that the group order comes out as listed. */
+    const playedRoundOne = () =>
+      buildEvent({
+        rotationSlots: slotsFor(1, [groupA, groupB]),
+        games: [
+          // p1 wins all three in group 0; p5 wins all three in group 1.
+          ...gamesFor(1, 0, groupA, [
+            [21, 15],
+            [21, 15],
+            [21, 15],
+          ]),
+          ...gamesFor(1, 1, groupB, [
+            [21, 15],
+            [21, 15],
+            [21, 15],
+          ]),
+        ],
+      });
+
+    it('refuses before the first round exists', async () => {
+      load(buildEvent());
+
+      await expect(service.advanceRotationRound('event-1', CURRENT_USER)).rejects.toThrow(
+        new ConflictException('The first round has not been generated yet'),
+      );
+    });
+
+    it('refuses while any game of the round is unplayed', async () => {
+      load(
+        buildEvent({
+          rotationSlots: slotsFor(1, [groupA, groupB]),
+          games: [...gamesFor(1, 0, groupA, [[21, 15], null, null]), ...gamesFor(1, 1, groupB, [null, null, null])],
+        }),
+      );
+
+      await expect(service.advanceRotationRound('event-1', CURRENT_USER)).rejects.toThrow(
+        new ConflictException('Every game of the current round must have a result before the next round'),
+      );
+      expect(prisma.ongoingRotationSlot.create).not.toHaveBeenCalled();
+    });
+
+    it('promotes the top two and relegates the bottom two into the next round', async () => {
+      load(playedRoundOne());
+
+      await service.advanceRotationRound('event-1', CURRENT_USER);
+
+      const slots = prisma.ongoingRotationSlot.create.mock.calls.map((call: any) => call[0].data);
+      expect(slots.every((slot: any) => slot.round === 2)).toBe(true);
+
+      const group0 = slots.filter((slot: any) => slot.groupIndex === 0).map((slot: any) => slot.playerId);
+      const group1 = slots.filter((slot: any) => slot.groupIndex === 1).map((slot: any) => slot.playerId);
+
+      // Group 0 keeps its own top two and receives group 1's top two.
+      expect(group0).toContain('p1');
+      expect(group1).not.toContain('p1');
+      expect(group0).toContain('p5');
+      // Group 0's bottom two drop into group 1.
+      expect(group1.length).toBe(4);
+      expect(group0.length).toBe(4);
+      expect([...group0, ...group1].sort()).toEqual([...groupA, ...groupB].sort());
+    });
+
+    it('refuses to advance past the configured last round', async () => {
+      const event = playedRoundOne();
+      event.config.rotationRounds = 1;
+      load(event);
+
+      await expect(service.advanceRotationRound('event-1', CURRENT_USER)).rejects.toThrow(
+        /Round 1 is the last one/,
+      );
+    });
+
+    it('refuses on a scheme that has no rounds', async () => {
+      const event = buildEvent();
+      event.config.scheme = 'roundRobin';
+      load(event);
+
+      await expect(service.advanceRotationRound('event-1', CURRENT_USER)).rejects.toThrow(
+        new BadRequestException('Rounds can only be advanced in a fullRotation tournament'),
+      );
+    });
+  });
+
+  describe('rotation state in the response', () => {
+    it('is null for a scheme that does not use it', async () => {
+      const event = buildEvent();
+      event.config.scheme = 'roundRobin';
+      load(event);
+
+      const result = await service.findOne('event-1');
+
+      expect(result.rotation).toBeNull();
+    });
+
+    it('reports the round tables and stays unfinished before the last round', async () => {
+      load(
+        buildEvent({
+          rotationSlots: slotsFor(1, [
+            ['p1', 'p2', 'p3', 'p4'],
+            ['p5', 'p6', 'p7', 'p8'],
+          ]),
+          games: [
+            ...gamesFor(1, 0, ['p1', 'p2', 'p3', 'p4'], [
+              [21, 15],
+              [21, 15],
+              [21, 15],
+            ]),
+            ...gamesFor(1, 1, ['p5', 'p6', 'p7', 'p8'], [
+              [21, 15],
+              [21, 15],
+              [21, 15],
+            ]),
+          ],
+        }),
+      );
+
+      const result = await service.findOne('event-1');
+
+      expect(result.rotation).toMatchObject({ totalRounds: 3, currentRound: 1, isFinished: false });
+      expect(result.rotation!.rounds).toHaveLength(1);
+      expect(result.rotation!.rounds[0].isComplete).toBe(true);
+      expect(result.rotation!.rounds[0].groups).toHaveLength(2);
+      expect(result.rotation!.rounds[0].groups[0].standings[0]).toMatchObject({ place: 1, wins: 3 });
+      expect(result.rotation!.finalStandings).toEqual([]);
+    });
+
+    it('takes the podium from the strongest group once the last round is complete', async () => {
+      const event = buildEvent({
+        rotationSlots: slotsFor(1, [
+          ['p1', 'p2', 'p3', 'p4'],
+          ['p5', 'p6', 'p7', 'p8'],
+        ]),
+        games: [
+          ...gamesFor(1, 0, ['p1', 'p2', 'p3', 'p4'], [
+            [21, 15],
+            [21, 15],
+            [21, 15],
+          ]),
+          ...gamesFor(1, 1, ['p5', 'p6', 'p7', 'p8'], [
+            [21, 15],
+            [21, 15],
+            [21, 15],
+          ]),
+        ],
+      });
+      event.config.rotationRounds = 1;
+      load(event);
+
+      const result = await service.findOne('event-1');
+
+      expect(result.rotation!.isFinished).toBe(true);
+      expect(result.rotation!.finalStandings).toHaveLength(8);
+      // The winner of group 0 wins the tournament; group 1 fills the places below group 0 entirely.
+      expect(result.rotation!.finalStandings[0].player.id).toBe('p1');
+      expect(result.rotation!.finalStandings.slice(0, 4).map((row) => row.player.id)).toEqual([
+        'p1',
+        'p2',
+        'p3',
+        'p4',
+      ]);
+      expect(result.rotation!.finalStandings[4].place).toBe(5);
+    });
+  });
+});
+
+describe('OngoingService fullRotation config', () => {
+  let service: OngoingService;
+  let prisma: any;
+
+  const CURRENT_USER = { sub: 'user-1', email: 'user1@example.com', role: 'admin', jti: 'jti-1', iat: 0, exp: 0 };
+
+  const eventRow = (overrides: Record<string, unknown> = {}) => ({
+    id: 'event-1',
+    name: 'Cup',
+    date: new Date('2026-09-20T00:00:00.000Z'),
+    createdAt: new Date('2026-09-01T00:00:00.000Z'),
+    updatedAt: new Date('2026-09-01T00:00:00.000Z'),
+    createdByUserId: 'user-1',
+    config: {
+      gamesPerPair: 1,
+      courts: 1,
+      maxTeams: null,
+      scheme: 'roundRobin',
+      groupCount: 1,
+      qualifiersPerGroup: null,
+      rotationRounds: 3,
+      visibility: 'public',
+      allowSoloRegistration: false,
+    },
+    teams: [],
+    soloPlayers: [],
+    games: [],
+    rotationSlots: [],
+    ...overrides,
+  });
+
+  beforeEach(async () => {
+    prisma = {
+      ongoingEvent: {
+        findUnique: jest.fn(async () => eventRow()),
+        create: jest.fn(async () => eventRow()),
+      },
+      ongoingEventConfig: { upsert: jest.fn(async () => ({})) },
+      ongoingTeam: { deleteMany: jest.fn(async () => ({ count: 0 })), createMany: jest.fn() },
+      ongoingGame: { deleteMany: jest.fn(async () => ({ count: 0 })), count: jest.fn(async () => 0) },
+      ongoingSoloPlayer: { deleteMany: jest.fn(async () => ({ count: 0 })) },
+      player: { findMany: jest.fn(async () => []) },
+      $transaction: jest.fn(),
+    };
+    prisma.$transaction = jest.fn(async (cb: any) => cb(prisma));
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        OngoingService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: UserService, useValue: { findById: jest.fn(async () => ({ playerId: 'p1' } as any)) } },
+      ],
+    }).compile();
+
+    service = module.get<OngoingService>(OngoingService);
+  });
+
+  const updateWith = (extra: Record<string, unknown>) =>
+    service.updateConfig('event-1', { gamesPerPair: 1, courts: 1, scheme: 'fullRotation', ...extra } as any, CURRENT_USER);
+
+  it('accepts two or three groups', async () => {
+    await updateWith({ groupCount: 2 });
+    expect(prisma.ongoingEventConfig.upsert.mock.calls[0][0].update.groupCount).toBe(2);
+
+    await updateWith({ groupCount: 3 });
+    expect(prisma.ongoingEventConfig.upsert.mock.calls[1][0].update.groupCount).toBe(3);
+  });
+
+  it('rejects a group count the format cannot fill', async () => {
+    await expect(updateWith({ groupCount: 1 })).rejects.toThrow(/needs 2 or 3 groups of 4/);
+    await expect(updateWith({ groupCount: 4 })).rejects.toThrow(/needs 2 or 3 groups of 4/);
+    await expect(updateWith({ groupCount: 2.5 })).rejects.toThrow(/needs 2 or 3 groups of 4/);
+  });
+
+  it('defaults to two groups and three rounds when neither is given', async () => {
+    await updateWith({});
+
+    const written = prisma.ongoingEventConfig.upsert.mock.calls[0][0].update;
+    expect(written.groupCount).toBe(2);
+    expect(written.rotationRounds).toBe(3);
+  });
+
+  it('rejects fewer than one round', async () => {
+    await expect(updateWith({ groupCount: 2, rotationRounds: 0 })).rejects.toThrow(
+      new BadRequestException('rotationRounds must be at least 1'),
+    );
+    await expect(updateWith({ groupCount: 2, rotationRounds: 1.5 })).rejects.toThrow(
+      new BadRequestException('rotationRounds must be at least 1'),
+    );
+  });
+
+  it('clears qualifiersPerGroup: there is no playoff to seed', async () => {
+    await updateWith({ groupCount: 2, qualifiersPerGroup: 2 });
+
+    expect(prisma.ongoingEventConfig.upsert.mock.calls[0][0].update.qualifiersPerGroup).toBeNull();
+  });
+
+  it('forces solo registration on, since players are the entry unit', async () => {
+    await updateWith({ groupCount: 2, allowSoloRegistration: false });
+
+    expect(prisma.ongoingEventConfig.upsert.mock.calls[0][0].update.allowSoloRegistration).toBe(true);
+  });
+
+  it('refuses to switch an event that already has pairs onto the scheme', async () => {
+    prisma.ongoingEvent.findUnique = jest.fn(async () =>
+      eventRow({
+        teams: [
+          {
+            id: 't1',
+            player1: { id: 'p1', name: 'A', playerStats: { rank: 1000 } },
+            player2: { id: 'p2', name: 'B', playerStats: { rank: 1000 } },
+            groupIndex: null,
+          },
+        ],
+      }),
+    );
+
+    await expect(updateWith({ groupCount: 2 })).rejects.toThrow(/clear the roster before switching/);
+    expect(prisma.ongoingEventConfig.upsert).not.toHaveBeenCalled();
+  });
+
+  it('refuses a create that carries a team roster', async () => {
+    await expect(
+      service.create(
+        {
+          name: 'Cup',
+          date: '2026-09-20T00:00:00.000Z',
+          scheme: 'fullRotation',
+          groupCount: 2,
+          teams: [{ player1Id: 'p1', player2Id: 'p2' }],
+        } as any,
+        CURRENT_USER,
+      ),
+    ).rejects.toThrow(new BadRequestException('A fullRotation tournament registers individual players, not teams'));
+    expect(prisma.ongoingEvent.create).not.toHaveBeenCalled();
+  });
+
+  it('creates with solo registration on and no maxTeams-driven roster', async () => {
+    await service.create(
+      { name: 'Cup', date: '2026-09-20T00:00:00.000Z', scheme: 'fullRotation', groupCount: 3, rotationRounds: 4 } as any,
+      CURRENT_USER,
+    );
+
+    const config = prisma.ongoingEvent.create.mock.calls[0][0].data.config.create;
+    expect(config).toMatchObject({
+      scheme: 'fullRotation',
+      groupCount: 3,
+      rotationRounds: 4,
+      qualifiersPerGroup: null,
+      allowSoloRegistration: true,
+    });
+  });
+
+  it('refuses setTeams on the scheme', async () => {
+    prisma.ongoingEvent.findUnique = jest.fn(async () =>
+      eventRow({ config: { ...eventRow().config, scheme: 'fullRotation', groupCount: 2 } }),
+    );
+
+    await expect(
+      service.setTeams('event-1', { teams: [{ player1Id: 'p1', player2Id: 'p2' }] }, CURRENT_USER),
+    ).rejects.toThrow(new BadRequestException('A fullRotation tournament registers individual players, not teams'));
+  });
+});
+
+describe('OngoingService.updateGameScore on a rotation game', () => {
+  let service: OngoingService;
+  let prisma: any;
+
+  const CURRENT_USER = { sub: 'user-1', email: 'user1@example.com', role: 'admin', jti: 'jti-1', iat: 0, exp: 0 };
+
+  beforeEach(async () => {
+    prisma = {
+      ongoingEvent: {
+        findUnique: jest.fn(async () => ({
+          id: 'event-1',
+          createdByUserId: 'user-1',
+          config: { scheme: 'fullRotation', groupCount: 2, rotationRounds: 3 },
+        })),
+      },
+      ongoingGame: {
+        findUnique: jest.fn(async () => ({
+          id: 'game-1',
+          eventId: 'event-1',
+          // A rotation fixture legitimately has no team rows: its sides live in ongoing_game_players.
+          team1Id: null,
+          team2Id: null,
+          phase: 'rotation',
+          bracketRound: null,
+          bracketSlot: null,
+        })),
+        update: jest.fn(async (args: any) => ({ ...args.data, id: 'game-1', eventId: 'event-1' })),
+        findFirst: jest.fn(async () => null),
+        aggregate: jest.fn(async () => ({ _max: { bracketRound: null } })),
+      },
+      $transaction: jest.fn(),
+    };
+    prisma.$transaction = jest.fn(async (cb: any) => cb(prisma));
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        OngoingService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: UserService, useValue: { findById: jest.fn() } },
+      ],
+    }).compile();
+
+    service = module.get<OngoingService>(OngoingService);
+  });
+
+  it('records a score even though both team ids are null', async () => {
+    await service.updateGameScore('game-1', { team1Points: 21, team2Points: 15 }, CURRENT_USER);
+
+    expect(prisma.ongoingGame.update).toHaveBeenCalledWith({
+      where: { id: 'game-1' },
+      data: { team1Points: 21, team2Points: 15 },
+    });
+  });
+
+  it('still refuses an empty bracket slot, where null team ids mean "unknown"', async () => {
+    prisma.ongoingGame.findUnique = jest.fn(async () => ({
+      id: 'game-1',
+      eventId: 'event-1',
+      team1Id: null,
+      team2Id: null,
+      phase: 'playoff',
+      bracketRound: 1,
+      bracketSlot: 0,
+    }));
+
+    await expect(
+      service.updateGameScore('game-1', { team1Points: 21, team2Points: 15 }, CURRENT_USER),
+    ).rejects.toThrow(new BadRequestException('Both teams must be known before a result can be recorded'));
+  });
+});
+
+describe('OngoingService player anonymity', () => {
+  let service: OngoingService;
+  let prisma: any;
+
+  const player = (id: string, name: string, isAnonymous: boolean) => ({
+    id,
+    name,
+    avatar: null,
+    playerStats: { rank: 1000 },
+    user: { isAnonymous },
+  });
+
+  beforeEach(async () => {
+    prisma = {
+      ongoingEvent: {
+        findUnique: jest.fn(async () => ({
+          id: 'event-1',
+          name: 'Cup',
+          date: new Date('2026-09-20T00:00:00.000Z'),
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          createdByUserId: 'u1',
+          config: { scheme: 'roundRobin', groupCount: 1, rotationRounds: 3, visibility: 'public' },
+          teams: [
+            {
+              id: 't1',
+              player1: player('p1', 'Artem Borzienkov', true),
+              player2: player('p2', 'Open Player', false),
+              groupIndex: null,
+            },
+          ],
+          soloPlayers: [{ id: 's1', player: player('p3', 'Hidden Solo', true) }],
+          games: [],
+          rotationSlots: [],
+        })),
+      },
+      ongoingGame: { count: jest.fn(async () => 0) },
+      $transaction: jest.fn(),
+    };
+    prisma.$transaction = jest.fn(async (cb: any) => cb(prisma));
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        OngoingService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: UserService, useValue: { findById: jest.fn() } },
+      ],
+    }).compile();
+
+    service = module.get<OngoingService>(OngoingService);
+  });
+
+  it('carries the flag through to team players, per player', async () => {
+    const event = await service.findOne('event-1');
+
+    expect(event.teams[0].player1).toMatchObject({ name: 'Artem Borzienkov', isAnonymous: true });
+    expect(event.teams[0].player2).toMatchObject({ name: 'Open Player', isAnonymous: false });
+  });
+
+  it('carries the flag through to the solo pool', async () => {
+    const event = await service.findOne('event-1');
+
+    expect(event.soloPlayers[0].player).toMatchObject({ name: 'Hidden Solo', isAnonymous: true });
+  });
+
+  it('returns the real name regardless: masking is the client’s job, storage is untouched', async () => {
+    const event = await service.findOne('event-1');
+
+    // The API is the record; an anonymous player’s stored name still travels so a client that is
+    // allowed to see it (the organiser picking a partner) can.
+    expect(event.teams[0].player1.name).toBe('Artem Borzienkov');
+  });
+
+  it('treats a player with no linked account as not anonymous', async () => {
+    prisma.ongoingEvent.findUnique = jest.fn(async () => ({
+      id: 'event-1',
+      name: 'Cup',
+      date: new Date('2026-09-20T00:00:00.000Z'),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      createdByUserId: 'u1',
+      config: { scheme: 'roundRobin', groupCount: 1, rotationRounds: 3, visibility: 'public' },
+      teams: [],
+      soloPlayers: [{ id: 's1', player: { id: 'p9', name: 'No Account', avatar: null, playerStats: null } }],
+      games: [],
+      rotationSlots: [],
+    }));
+
+    const event = await service.findOne('event-1');
+
+    expect(event.soloPlayers[0].player.isAnonymous).toBe(false);
   });
 });

@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { UserService } from '../user/user.service';
+import { resolveDisplayName } from '../user/display-name';
 import { JwtPayload } from '../auth-guards';
 import { CreateOngoingEventDto } from './dto/create-ongoing-event.dto';
 import { UpdateOngoingConfigDto } from './dto/update-ongoing-config.dto';
@@ -15,6 +16,16 @@ import { AddOngoingTeamDto } from './dto/add-ongoing-team.dto';
 import { UpdateOngoingGameScoreDto } from './dto/update-ongoing-game-score.dto';
 import { AddSoloPlayerDto, FormTeamsFromSoloDto } from './dto/solo-registration.dto';
 import {
+  applyPromotionRelegation,
+  rankGroupPlayers,
+  rotationFixtures,
+  seedIntoGroups,
+  ROTATION_GROUP_SIZE,
+  ROTATION_MAX_GROUPS,
+  ROTATION_MIN_GROUPS,
+  type RotationGameResult,
+} from './rotation';
+import {
   OngoingEventListItemDto,
   OngoingEventResponseDto,
   OngoingGameResponseDto,
@@ -22,27 +33,53 @@ import {
   OngoingTeamResponseDto,
   OngoingSoloPlayerDto,
   OngoingSoloPairPreviewDto,
+  OngoingTeamPlayerDto,
+  OngoingRotationRoundDto,
+  OngoingRotationStandingDto,
+  OngoingRotationStateDto,
 } from './dto/ongoing-event-response.dto';
 import { buildGroupPairings, shuffle, packIntoRounds } from './schedule';
 import { effectiveTeamCount, pairByRating } from './pairing';
 import { dealIntoGroups, isPowerOfTwo } from './groups';
 import { buildSeedList, buildBracketGames, rankGroupTeams, Qualifier } from './bracket';
 
+// Sign-up stopped collecting a name, so the organiser line resolves one from the linked player;
+// everything resolveDisplayName can fall back to has to be selected with it.
+const CREATOR_SELECT = {
+  id: true,
+  name: true,
+  isAnonymous: true,
+  telegramNickname: true,
+  email: true,
+  player: { select: { name: true } },
+} as const;
+
+// Anonymity is a property of the linked account, so every player read in this module pulls it.
+const PLAYER_USER_SELECT = { select: { isAnonymous: true } } as const;
+
 const EVENT_INCLUDE = {
   config: true,
   teams: {
-    include: { player1: { include: { playerStats: true } }, player2: { include: { playerStats: true } } },
+    include: {
+      player1: { include: { playerStats: true, user: PLAYER_USER_SELECT } },
+      player2: { include: { playerStats: true, user: PLAYER_USER_SELECT } },
+    },
     // A single setTeams transaction stamps every row in the same millisecond, so createdAt alone has
     // ties; id is the tiebreaker the frontend's roster-remount key and index-wise diff rely on.
     orderBy: [{ createdAt: 'asc' as const }, { id: 'asc' as const }],
   },
   soloPlayers: {
-    include: { player: { include: { playerStats: true } } },
+    include: { player: { include: { playerStats: true, user: PLAYER_USER_SELECT } } },
     // Same reason as teams: a bulk insert stamps one millisecond, so id is the real tiebreak.
     orderBy: [{ createdAt: 'asc' as const }, { id: 'asc' as const }],
   },
   games: {
+    include: { sidePlayers: { include: { player: { include: { user: PLAYER_USER_SELECT } } } } },
     orderBy: [{ round: 'asc' as const }, { order: 'asc' as const }],
+  },
+  rotationSlots: {
+    include: { player: { include: { playerStats: true, user: PLAYER_USER_SELECT } } },
+    orderBy: [{ round: 'asc' as const }, { groupIndex: 'asc' as const }, { createdAt: 'asc' as const }],
   },
 };
 
@@ -55,6 +92,9 @@ const EVENT_INCLUDE = {
 // least one filled" (De Morgan's law) — not "both filled". ANDing two `{ not: null }` filters is the
 // correct translation of isGamePlayed below.
 const PLAYED_GAME_WHERE = { team1Points: { not: null }, team2Points: { not: null } } as const;
+
+// Three rounds is enough for the ladder to sort a field of 8-12; the organiser can change it.
+const DEFAULT_ROTATION_ROUNDS = 3;
 
 // Rule 4: undoing a playoff result — by clearing it or by editing it to a different score — while its
 // successor already has a result is refused uniformly. A one-sentence rule ("undo the later round
@@ -79,14 +119,17 @@ export class OngoingService {
         // The list card names the roster and the pool, so the players (and their ratings) come along
         // rather than the page fanning out to the detail endpoint once per tournament.
         teams: {
-          include: { player1: { include: { playerStats: true } }, player2: { include: { playerStats: true } } },
+          include: {
+            player1: { include: { playerStats: true, user: PLAYER_USER_SELECT } },
+            player2: { include: { playerStats: true, user: PLAYER_USER_SELECT } },
+          },
           orderBy: [{ createdAt: 'asc' as const }, { id: 'asc' as const }],
         },
         soloPlayers: {
-          include: { player: { include: { playerStats: true } } },
+          include: { player: { include: { playerStats: true, user: PLAYER_USER_SELECT } } },
           orderBy: [{ createdAt: 'asc' as const }, { id: 'asc' as const }],
         },
-        createdByUser: { select: { id: true, name: true } },
+        createdByUser: { select: CREATOR_SELECT },
         config: { select: { visibility: true } },
         games: true,
       },
@@ -99,7 +142,13 @@ export class OngoingService {
       startTime: event.startTime,
       location: event.location,
       createdByUserId: event.createdByUserId,
-      createdBy: event.createdByUser ? { id: event.createdByUser.id, name: event.createdByUser.name } : null,
+      createdBy: event.createdByUser
+        ? {
+            id: event.createdByUser.id,
+            name: resolveDisplayName(event.createdByUser),
+            isAnonymous: event.createdByUser.isAnonymous ?? false,
+          }
+        : null,
       visibility: event.config?.visibility ?? 'public',
       teamsCount: event.teams.length,
       gamesCount: event.games.length,
@@ -139,13 +188,21 @@ export class OngoingService {
     const maxTeams = this.normaliseMaxTeams(createOngoingEventDto.maxTeams, teams ? teams.length : 0);
     const startTime = this.normaliseStartTime(createOngoingEventDto.startTime);
     const location = this.normaliseLocation(createOngoingEventDto.location);
-    const { scheme, groupCount, qualifiersPerGroup } = this.normaliseScheme(
-      createOngoingEventDto.scheme,
-      createOngoingEventDto.groupCount,
-      createOngoingEventDto.qualifiersPerGroup,
-    );
+    const { scheme, groupCount, qualifiersPerGroup, rotationRounds } = this.normaliseScheme({
+      scheme: createOngoingEventDto.scheme,
+      groupCount: createOngoingEventDto.groupCount,
+      qualifiersPerGroup: createOngoingEventDto.qualifiersPerGroup,
+      rotationRounds: createOngoingEventDto.rotationRounds,
+    });
     const visibility = this.normaliseVisibility(createOngoingEventDto.visibility);
-    const allowSoloRegistration = this.normaliseAllowSolo(createOngoingEventDto.allowSoloRegistration);
+    // fullRotation registers players, not pairs, so its entry path is the solo one — the flag is not
+    // the organiser's to turn off there.
+    const allowSoloRegistration =
+      scheme === 'fullRotation' ? true : this.normaliseAllowSolo(createOngoingEventDto.allowSoloRegistration);
+
+    if (scheme === 'fullRotation' && teams && teams.length) {
+      throw new BadRequestException('A fullRotation tournament registers individual players, not teams');
+    }
 
     if (teams && teams.length) {
       const playerIds = this.validateTeamPairs(teams);
@@ -166,6 +223,7 @@ export class OngoingService {
           scheme,
           groupCount,
           qualifiersPerGroup,
+          rotationRounds,
           visibility,
           allowSoloRegistration,
         },
@@ -214,13 +272,22 @@ export class OngoingService {
     const event = await this.loadEvent(id);
     this.assertCanManage(event.createdByUserId, currentUser);
     const maxTeams = this.normaliseMaxTeams(updateOngoingConfigDto.maxTeams, event.teams.length);
-    const { scheme, groupCount, qualifiersPerGroup } = this.normaliseScheme(
-      updateOngoingConfigDto.scheme,
-      updateOngoingConfigDto.groupCount,
-      updateOngoingConfigDto.qualifiersPerGroup,
-    );
+    const { scheme, groupCount, qualifiersPerGroup, rotationRounds } = this.normaliseScheme({
+      scheme: updateOngoingConfigDto.scheme,
+      groupCount: updateOngoingConfigDto.groupCount,
+      qualifiersPerGroup: updateOngoingConfigDto.qualifiersPerGroup,
+      rotationRounds: updateOngoingConfigDto.rotationRounds,
+    });
     const visibility = this.normaliseVisibility(updateOngoingConfigDto.visibility);
-    const allowSoloRegistration = this.normaliseAllowSolo(updateOngoingConfigDto.allowSoloRegistration);
+    const allowSoloRegistration =
+      scheme === 'fullRotation' ? true : this.normaliseAllowSolo(updateOngoingConfigDto.allowSoloRegistration);
+
+    // Switching an event that already has pairs onto fullRotation would leave that roster unplayable.
+    if (scheme === 'fullRotation' && event.teams.length) {
+      throw new BadRequestException(
+        'This tournament has registered teams; clear the roster before switching it to fullRotation',
+      );
+    }
 
     // Otherwise the pool's entrants are stranded behind a UI that no longer renders it.
     if (!allowSoloRegistration && event.soloPlayers.length) {
@@ -237,6 +304,7 @@ export class OngoingService {
         scheme,
         groupCount,
         qualifiersPerGroup,
+        rotationRounds,
         visibility,
         allowSoloRegistration,
       },
@@ -247,6 +315,7 @@ export class OngoingService {
         scheme,
         groupCount,
         qualifiersPerGroup,
+        rotationRounds,
         visibility,
         allowSoloRegistration,
       },
@@ -265,6 +334,10 @@ export class OngoingService {
 
     if (!setOngoingTeamsDto || !Array.isArray(setOngoingTeamsDto.teams)) {
       throw new BadRequestException('teams must be an array');
+    }
+
+    if (event.config.scheme === 'fullRotation' && setOngoingTeamsDto.teams.length) {
+      throw new BadRequestException('A fullRotation tournament registers individual players, not teams');
     }
 
     const teams = setOngoingTeamsDto.teams;
@@ -305,6 +378,12 @@ export class OngoingService {
 
     if (!addOngoingTeamDto) {
       throw new BadRequestException('player1Id and player2Id are required');
+    }
+
+    if (event.config.scheme === 'fullRotation') {
+      throw new BadRequestException(
+        'A fullRotation tournament registers individual players; register without a partner instead',
+      );
     }
 
     const { player1Id, player2Id } = addOngoingTeamDto;
@@ -368,7 +447,7 @@ export class OngoingService {
   async findOpen(): Promise<OngoingOpenEventDto[]> {
     const events = await this.prisma.ongoingEvent.findMany({
       orderBy: { date: 'asc' },
-      include: { ...EVENT_INCLUDE, createdByUser: { select: { id: true, name: true } } },
+      include: { ...EVENT_INCLUDE, createdByUser: { select: CREATOR_SELECT } },
     });
 
     const open: OngoingOpenEventDto[] = [];
@@ -394,12 +473,20 @@ export class OngoingService {
         // The calendar needs the owner to decide whether to render a Register control on a private
         // tournament, so this mirrors OngoingEventListItemDto rather than being derived client-side.
         createdByUserId: event.createdByUserId ?? null,
-        createdBy: event.createdByUser ? { id: event.createdByUser.id, name: event.createdByUser.name } : null,
+        createdBy: event.createdByUser
+        ? {
+            id: event.createdByUser.id,
+            name: resolveDisplayName(event.createdByUser),
+            isAnonymous: event.createdByUser.isAnonymous ?? false,
+          }
+        : null,
         teams: event.teams.map((team) => this.mapTeam(team)),
         visibility: event.config && event.config.visibility !== undefined ? event.config.visibility : 'public',
         allowSoloRegistration:
           event.config && event.config.allowSoloRegistration !== undefined ? event.config.allowSoloRegistration : false,
         soloPlayers: event.soloPlayers.map((solo) => this.mapSoloPlayer(solo)),
+        scheme: event.config && event.config.scheme !== undefined ? event.config.scheme : 'roundRobin',
+        groupCount: event.config && event.config.groupCount !== undefined ? event.config.groupCount : 1,
       });
     }
 
@@ -475,7 +562,13 @@ export class OngoingService {
       throw new ConflictException(`Player ${playerId} is already registered without a partner`);
     }
 
-    if (
+    if (event.config.scheme === 'fullRotation') {
+      // The groups have to fill exactly, so the roster is capped at the seats the format defines and
+      // maxTeams (a pairs figure) does not apply.
+      if (event.soloPlayers.length + 1 > this.rotationSeats(event.config)) {
+        throw new ConflictException('This tournament is full');
+      }
+    } else if (
       event.config.maxTeams !== null &&
       effectiveTeamCount(event.teams.length, event.soloPlayers.length + 1) > event.config.maxTeams
     ) {
@@ -599,6 +692,12 @@ export class OngoingService {
     const event = await this.loadEvent(id);
     this.assertCanManage(event.createdByUserId, currentUser);
 
+    // fullRotation schedules one round at a time — the next round's groups are not knowable until
+    // this one has been played — so its first round is built by its own path.
+    if (event.config.scheme === 'fullRotation') {
+      return this.writeRotationRound(id, 1, this.seedFirstRotationRound(event));
+    }
+
     if (event.teams.length < 2) {
       throw new BadRequestException('At least two teams are required to generate a schedule');
     }
@@ -650,6 +749,160 @@ export class OngoingService {
     });
 
     return this.loadEvent(id);
+  }
+
+  /**
+   * Groups for round 1, seeded by rating. The roster has to fill every group exactly: a group of
+   * three or five has no three-fixture rotation, so a partial field cannot be scheduled at all.
+   */
+  private seedFirstRotationRound(event: any): string[][] {
+    const seats = this.rotationSeats(event.config);
+
+    if (event.soloPlayers.length !== seats) {
+      throw new BadRequestException(
+        `A fullRotation tournament with ${event.config.groupCount} groups needs exactly ${seats} registered ` +
+          `players, and this one has ${event.soloPlayers.length}`,
+      );
+    }
+
+    return seedIntoGroups(
+      // `event` here is the mapped response, where mapSoloPlayer has already flattened the rating —
+      // reading solo.player.playerStats would silently seed everyone at the 1000 default.
+      event.soloPlayers.map((solo: any) => ({ playerId: solo.player.id, rating: solo.rating })),
+      event.config.groupCount,
+    );
+  }
+
+  /**
+   * Replaces round `round` — its slots and its games — with the given groups. Generating a round
+   * again is therefore idempotent, and earlier rounds are left untouched so their results survive.
+   */
+  private async writeRotationRound(
+    eventId: string,
+    round: number,
+    groups: string[][],
+  ): Promise<OngoingEventResponseDto> {
+    await this.prisma.$transaction(async (tx) => {
+      // Games first: ongoing_game_players cascades from the game, so deleting the games clears the
+      // participants too.
+      await tx.ongoingGame.deleteMany({ where: { eventId, phase: 'rotation', round } });
+      await tx.ongoingRotationSlot.deleteMany({ where: { eventId, round } });
+
+      for (let groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
+        for (const playerId of groups[groupIndex]) {
+          await tx.ongoingRotationSlot.create({ data: { eventId, playerId, round, groupIndex } });
+        }
+      }
+
+      let order = 0;
+      for (let groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
+        for (const fixture of rotationFixtures(groups[groupIndex])) {
+          await tx.ongoingGame.create({
+            data: {
+              eventId,
+              team1Id: null,
+              team2Id: null,
+              team1Points: null,
+              team2Points: null,
+              round,
+              // One notional court per fixture in a round; the organiser reads them as a list.
+              court: order + 1,
+              order,
+              phase: 'rotation',
+              groupIndex,
+              sidePlayers: {
+                create: [
+                  ...fixture.side1.map((playerId) => ({ playerId, side: 1 })),
+                  ...fixture.side2.map((playerId) => ({ playerId, side: 2 })),
+                ],
+              },
+            },
+          });
+          order += 1;
+        }
+      }
+    });
+
+    return this.loadEvent(eventId);
+  }
+
+  /**
+   * Builds the next round from the current one's finishing order: top two of each group up, bottom
+   * two down. Refuses while any current-round game is unplayed, and after the last round — at that
+   * point the strongest group's table is the result.
+   */
+  async advanceRotationRound(id: string, currentUser: JwtPayload): Promise<OngoingEventResponseDto> {
+    const event = await this.loadEvent(id);
+    this.assertCanManage(event.createdByUserId, currentUser);
+
+    if (event.config.scheme !== 'fullRotation') {
+      throw new BadRequestException('Rounds can only be advanced in a fullRotation tournament');
+    }
+
+    const rotation = event.rotation;
+    if (!rotation || !rotation.currentRound) {
+      throw new ConflictException('The first round has not been generated yet');
+    }
+
+    const currentRound = rotation.currentRound;
+    const roundGames = event.games.filter((game) => game.phase === 'rotation' && game.round === currentRound);
+    if (roundGames.some((game) => !isGamePlayed(game))) {
+      throw new ConflictException('Every game of the current round must have a result before the next round');
+    }
+    if (currentRound >= rotation.totalRounds) {
+      throw new ConflictException(
+        `Round ${currentRound} is the last one; the strongest group's table is the final result`,
+      );
+    }
+
+    const table = rotation.rounds.find((round) => round.round === currentRound);
+    if (!table) {
+      throw new ConflictException('The current round has no group tables to advance from');
+    }
+
+    const rankedGroups = table.groups
+      .slice()
+      .sort((one, two) => one.groupIndex - two.groupIndex)
+      .map((group) => group.standings.map((row) => row.player.id));
+
+    return this.writeRotationRound(id, currentRound + 1, applyPromotionRelegation(rankedGroups));
+  }
+
+  private rotationSeats(config: { groupCount: number }): number {
+    return config.groupCount * ROTATION_GROUP_SIZE;
+  }
+
+  /** The highest round that has slots — i.e. the round currently being played. 0 when none exists. */
+  private currentRotationRound(event: any): number {
+    return (event.rotationSlots || []).reduce((highest: number, slot: any) => Math.max(highest, slot.round), 0);
+  }
+
+  /** Every group of one round with its players in finishing order. */
+  private rankRotationRound(
+    event: any,
+    round: number,
+  ): Array<{ groupIndex: number; standings: ReturnType<typeof rankGroupPlayers> }> {
+    const slots = (event.rotationSlots || []).filter((slot: any) => slot.round === round);
+    const groupCount = slots.reduce((highest: number, slot: any) => Math.max(highest, slot.groupIndex + 1), 0);
+    const games: RotationGameResult[] = (event.games || [])
+      .filter((game: any) => game.phase === 'rotation' && game.round === round)
+      .map((game: any) => ({
+        side1PlayerIds: (game.sidePlayers || []).filter((p: any) => p.side === 1).map((p: any) => p.playerId),
+        side2PlayerIds: (game.sidePlayers || []).filter((p: any) => p.side === 2).map((p: any) => p.playerId),
+        side1Points: game.team1Points,
+        side2Points: game.team2Points,
+      }));
+
+    const groups: Array<{ groupIndex: number; standings: ReturnType<typeof rankGroupPlayers> }> = [];
+    for (let groupIndex = 0; groupIndex < groupCount; groupIndex += 1) {
+      // The rating is part of the ordering now (equal difference favours the lower-rated player), so
+      // it travels with the roster rather than being attached afterwards.
+      const groupPlayers = slots
+        .filter((slot: any) => slot.groupIndex === groupIndex)
+        .map((slot: any) => ({ playerId: slot.playerId, rating: slot.player?.playerStats?.rank ?? 1000 }));
+      groups.push({ groupIndex, standings: rankGroupPlayers(groupPlayers, games) });
+    }
+    return groups;
   }
 
   async generatePlayoff(id: string, currentUser: JwtPayload): Promise<OngoingEventResponseDto> {
@@ -805,8 +1058,9 @@ export class OngoingService {
     }
 
     // Rule 6: a bracket slot can be empty (playoff rounds are written ahead of the teams that will
-    // fill them), and a score is meaningless until both are known.
-    if (game.team1Id === null || game.team2Id === null) {
+    // fill them), and a score is meaningless until both are known. A rotation game is exempt: its
+    // sides are ad-hoc pairs recorded in sidePlayers, so it legitimately has no team rows at all.
+    if (game.phase !== 'rotation' && (game.team1Id === null || game.team2Id === null)) {
       throw new BadRequestException('Both teams must be known before a result can be recorded');
     }
 
@@ -978,20 +1232,42 @@ export class OngoingService {
     }
   }
 
-  private normaliseScheme(
-    scheme: string | undefined,
-    groupCount: number | undefined,
-    qualifiersPerGroup: number | undefined | null,
-  ): { scheme: string; groupCount: number; qualifiersPerGroup: number | null } {
+  private normaliseScheme(input: {
+    scheme?: string | null;
+    groupCount?: number | null;
+    qualifiersPerGroup?: number | null;
+    rotationRounds?: number | null;
+  }): { scheme: string; groupCount: number; qualifiersPerGroup: number | null; rotationRounds: number } {
+    const { scheme, groupCount, qualifiersPerGroup, rotationRounds } = input;
     const resolved = scheme === undefined || scheme === null ? 'roundRobin' : scheme;
 
-    if (resolved !== 'roundRobin' && resolved !== 'groupsPlayoff') {
-      throw new BadRequestException('scheme must be roundRobin or groupsPlayoff');
+    if (resolved !== 'roundRobin' && resolved !== 'groupsPlayoff' && resolved !== 'fullRotation') {
+      throw new BadRequestException('scheme must be roundRobin, groupsPlayoff or fullRotation');
+    }
+
+    // Only fullRotation runs rounds; the column keeps its default for the other two so nothing has
+    // to read it conditionally.
+    const rounds = rotationRounds === undefined || rotationRounds === null ? DEFAULT_ROTATION_ROUNDS : rotationRounds;
+
+    if (resolved === 'fullRotation') {
+      const groups = groupCount === undefined || groupCount === null ? ROTATION_MIN_GROUPS : groupCount;
+
+      if (!Number.isInteger(groups) || groups < ROTATION_MIN_GROUPS || groups > ROTATION_MAX_GROUPS) {
+        throw new BadRequestException(
+          `fullRotation needs ${ROTATION_MIN_GROUPS} or ${ROTATION_MAX_GROUPS} groups of ${ROTATION_GROUP_SIZE}`,
+        );
+      }
+      if (!Number.isInteger(rounds) || rounds < 1) {
+        throw new BadRequestException('rotationRounds must be at least 1');
+      }
+
+      // No playoff to seed: the ladder itself decides the podium.
+      return { scheme: resolved, groupCount: groups, qualifiersPerGroup: null, rotationRounds: rounds };
     }
 
     // A flat round-robin is the one-group case, so the group fields are meaningless there.
     if (resolved === 'roundRobin') {
-      return { scheme: resolved, groupCount: 1, qualifiersPerGroup: null };
+      return { scheme: resolved, groupCount: 1, qualifiersPerGroup: null, rotationRounds: rounds };
     }
 
     const groups = groupCount === undefined || groupCount === null ? 2 : groupCount;
@@ -1009,7 +1285,7 @@ export class OngoingService {
       throw new BadRequestException('groupCount times qualifiersPerGroup must be a power of two');
     }
 
-    return { scheme: resolved, groupCount: groups, qualifiersPerGroup };
+    return { scheme: resolved, groupCount: groups, qualifiersPerGroup, rotationRounds: rounds };
   }
 
   private normaliseVisibility(value: string | undefined | null): string {
@@ -1170,10 +1446,20 @@ export class OngoingService {
     return this.mapEvent(event);
   }
 
+  /** The one place an ongoing payload shapes a player, so the anonymity flag cannot be missed. */
+  private mapPlayer(player: any): OngoingTeamPlayerDto {
+    return {
+      id: player.id,
+      name: player.name,
+      isAnonymous: player.user?.isAnonymous ?? false,
+      avatar: player.avatar,
+    };
+  }
+
   private mapSoloPlayer(solo: any): OngoingSoloPlayerDto {
     return {
       id: solo.id,
-      player: { id: solo.player.id, name: solo.player.name, avatar: solo.player.avatar },
+      player: this.mapPlayer(solo.player),
       rating: solo.player.playerStats?.rank ?? 1000,
     };
   }
@@ -1198,6 +1484,10 @@ export class OngoingService {
         groupCount: event.config && event.config.groupCount !== undefined ? event.config.groupCount : 1,
         qualifiersPerGroup:
           event.config && event.config.qualifiersPerGroup !== undefined ? event.config.qualifiersPerGroup : null,
+        rotationRounds:
+          event.config && event.config.rotationRounds !== undefined
+            ? event.config.rotationRounds
+            : DEFAULT_ROTATION_ROUNDS,
         visibility: event.config && event.config.visibility !== undefined ? event.config.visibility : 'public',
         allowSoloRegistration:
           event.config && event.config.allowSoloRegistration !== undefined ? event.config.allowSoloRegistration : false,
@@ -1205,14 +1495,15 @@ export class OngoingService {
       teams: (event.teams || []).map((team) => this.mapTeam(team)),
       soloPlayers: (event.soloPlayers || []).map((solo) => this.mapSoloPlayer(solo)),
       games: (event.games || []).map((game) => this.mapGame(game)),
+      rotation: this.mapRotation(event),
     };
   }
 
   private mapTeam(team: any): OngoingTeamResponseDto {
     return {
       id: team.id,
-      player1: { id: team.player1.id, name: team.player1.name, avatar: team.player1.avatar },
-      player2: { id: team.player2.id, name: team.player2.name, avatar: team.player2.avatar },
+      player1: this.mapPlayer(team.player1),
+      player2: this.mapPlayer(team.player2),
       rating: (team.player1.playerStats?.rank ?? 1000) + (team.player2.playerStats?.rank ?? 1000),
       groupIndex: team.groupIndex ?? null,
     };
@@ -1233,6 +1524,73 @@ export class OngoingService {
       bracketRound: game.bracketRound,
       bracketSlot: game.bracketSlot,
       thirdPlace: game.thirdPlace,
+      groupIndex: game.groupIndex ?? null,
+      side1Players: this.mapGameSide(game, 1),
+      side2Players: this.mapGameSide(game, 2),
     };
+  }
+
+  private mapGameSide(game: any, side: number): OngoingTeamPlayerDto[] {
+    return (game.sidePlayers || [])
+      .filter((entry: any) => entry.side === side)
+      .map((entry: any) => this.mapPlayer(entry.player));
+  }
+
+  /**
+   * The whole rotation ladder: every round's tables, and the final order once the last round is in.
+   *
+   * Computed rather than stored so a corrected score reshuffles the tables immediately — the same
+   * reason the group standings are not persisted either.
+   */
+  private mapRotation(event: any): OngoingRotationStateDto | null {
+    if (!event.config || event.config.scheme !== 'fullRotation') return null;
+
+    const totalRounds = event.config.rotationRounds ?? DEFAULT_ROTATION_ROUNDS;
+    const currentRound = this.currentRotationRound(event);
+    const playerOf = new Map<string, OngoingTeamPlayerDto>(
+      (event.rotationSlots || []).map((slot: any) => [slot.playerId, this.mapPlayer(slot.player)]),
+    );
+
+    const toStandingDto = (row: any, index: number): OngoingRotationStandingDto => ({
+      place: index + 1,
+      player: playerOf.get(row.playerId) ?? { id: row.playerId, name: row.playerId, isAnonymous: false },
+      rating: row.rating,
+      played: row.played,
+      wins: row.wins,
+      losses: row.losses,
+      pointsFor: row.pointsFor,
+      pointsAgainst: row.pointsAgainst,
+      pointsDiff: row.pointsDiff,
+    });
+
+    const rounds: OngoingRotationRoundDto[] = [];
+    for (let round = 1; round <= currentRound; round += 1) {
+      const roundGames = (event.games || []).filter(
+        (game: any) => game.phase === 'rotation' && game.round === round,
+      );
+      rounds.push({
+        round,
+        isComplete: roundGames.length > 0 && roundGames.every((game: any) => isGamePlayed(game)),
+        groups: this.rankRotationRound(event, round).map((group) => ({
+          groupIndex: group.groupIndex,
+          standings: group.standings.map(toStandingDto),
+        })),
+      });
+    }
+
+    const lastRound = rounds[rounds.length - 1];
+    const isFinished = currentRound >= totalRounds && Boolean(lastRound?.isComplete);
+
+    // Strongest group first, each group in its own finishing order — so the winner of group 1 is
+    // the winner of the tournament.
+    const finalStandings = isFinished
+      ? lastRound.groups
+          .slice()
+          .sort((one, two) => one.groupIndex - two.groupIndex)
+          .flatMap((group) => group.standings)
+          .map((row, index) => ({ ...row, place: index + 1 }))
+      : [];
+
+    return { totalRounds, currentRound, isFinished, rounds, finalStandings };
   }
 }

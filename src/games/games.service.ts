@@ -5,6 +5,19 @@ import { UpdateGameDto } from './dto/update-game.dto';
 import { GameResponseDto } from './dto/game-response.dto';
 import { PlayerGameRowDto, PlayerGamesResponseDto } from './dto/player-game-row.dto';
 
+// Anonymity is a property of the linked account, so a published game row carries it per player.
+const GAME_PLAYER_SELECT = {
+  id: true,
+  name: true,
+  user: { select: { isAnonymous: true } },
+} as const;
+
+const mapGamePlayer = (player: any) => ({
+  id: player.id,
+  name: player.name,
+  isAnonymous: player.user?.isAnonymous ?? false,
+});
+
 @Injectable()
 export class GamesService {
   constructor(private prisma: PrismaService) {}
@@ -28,10 +41,10 @@ export class GamesService {
         skip,
         take,
         include: {
-          team1Player1: { select: { id: true, name: true } },
-          team1Player2: { select: { id: true, name: true } },
-          team2Player1: { select: { id: true, name: true } },
-          team2Player2: { select: { id: true, name: true } },
+          team1Player1: { select: GAME_PLAYER_SELECT },
+          team1Player2: { select: GAME_PLAYER_SELECT },
+          team2Player1: { select: GAME_PLAYER_SELECT },
+          team2Player2: { select: GAME_PLAYER_SELECT },
           gamePlayerRanks: {
             where: { playerId },
             select: { rankChange: true, rank: true },
@@ -49,13 +62,13 @@ export class GamesService {
 
   private mapToPlayerGameRow(game: any, playerId: string): PlayerGameRowDto {
     const team1 = {
-      player1: game.team1Player1,
-      player2: game.team1Player2,
+      player1: mapGamePlayer(game.team1Player1),
+      player2: mapGamePlayer(game.team1Player2),
       points: game.team1Points,
     };
     const team2 = {
-      player1: game.team2Player1,
-      player2: game.team2Player2,
+      player1: mapGamePlayer(game.team2Player1),
+      player2: mapGamePlayer(game.team2Player2),
       points: game.team2Points,
     };
 

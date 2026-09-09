@@ -1,5 +1,8 @@
 import { UnauthorizedException } from '@nestjs/common';
 import { JwtAuthGuard } from './jwt-auth.guard';
+// Derived, not hard-coded: these two tests are about being either side of the threshold, and a
+// literal "30 minutes" silently stopped meaning "above it" when the threshold was widened.
+import { ACCESS_TOKEN_REFRESH_THRESHOLD_SECONDS } from './jwt.config';
 
 const buildContext = (cookies: Record<string, string> = {}) => {
   const request: any = { cookies };
@@ -66,7 +69,7 @@ describe('JwtAuthGuard', () => {
       role: 'player',
       jti: 'jti-1',
       iat: nowSeconds,
-      exp: nowSeconds + 1800, // 30 minutes left — above the 10-minute refresh threshold
+      exp: nowSeconds + ACCESS_TOKEN_REFRESH_THRESHOLD_SECONDS * 2, // comfortably above the threshold
     };
     jwtService.verifyAsync.mockResolvedValue(payload);
     const { context, request, response } = buildContext({ access_token: 'valid' });
@@ -86,9 +89,14 @@ describe('JwtAuthGuard', () => {
       role: 'player',
       jti: 'jti-old',
       iat: nowSeconds - 1500,
-      exp: nowSeconds + 300, // 5 minutes left — below the 10-minute refresh threshold
+      exp: nowSeconds + Math.floor(ACCESS_TOKEN_REFRESH_THRESHOLD_SECONDS / 2), // inside the threshold
     };
-    const newPayload = { ...oldPayload, jti: 'jti-new', iat: nowSeconds, exp: nowSeconds + 1800 };
+    const newPayload = {
+      ...oldPayload,
+      jti: 'jti-new',
+      iat: nowSeconds,
+      exp: nowSeconds + ACCESS_TOKEN_REFRESH_THRESHOLD_SECONDS * 2,
+    };
     jwtService.verifyAsync.mockResolvedValueOnce(oldPayload).mockResolvedValueOnce(newPayload);
     jwtService.signAsync.mockResolvedValue('new-token');
     const { context, request, response } = buildContext({ access_token: 'valid' });

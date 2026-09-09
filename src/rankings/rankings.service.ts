@@ -18,6 +18,7 @@ export class RankingsService {
       id: player.id,
       tgId: player.tgId,
       name: player.name,
+      isAnonymous: player.user?.isAnonymous ?? false,
       avatar: player.avatar,
       gender: player.gender,
       active: player.active,
@@ -102,7 +103,8 @@ export class RankingsService {
         },
       },
       include: {
-        player: true,
+        // The anonymity flag rides along so the leaderboard rows carry it too.
+        player: { include: { user: { select: { isAnonymous: true } } } },
       },
       orderBy: {
         totalWins: 'desc',
@@ -133,6 +135,7 @@ export class RankingsService {
       },
       include: {
         playerStats: true,
+        user: { select: { isAnonymous: true } },
       },
     });
 
@@ -298,6 +301,7 @@ export class RankingsService {
       },
       include: {
         playerStats: true,
+        user: { select: { isAnonymous: true } },
       },
     });
 
@@ -382,6 +386,7 @@ export class RankingsService {
       },
       include: {
         playerStats: true,
+        user: { select: { isAnonymous: true } },
       },
     });
 
@@ -440,6 +445,7 @@ export class RankingsService {
       },
       include: {
         playerStats: true,
+        user: { select: { isAnonymous: true } },
       },
     });
 
@@ -736,6 +742,7 @@ export class RankingsService {
       },
       include: {
         playerStats: true,
+        user: { select: { isAnonymous: true } },
       },
     });
 

@@ -24,6 +24,10 @@ export class UpdateOngoingConfigDto {
   qualifiersPerGroup?: number;
 
   @IsOptional()
+  @IsInt()
+  rotationRounds?: number;
+
+  @IsOptional()
   @IsString()
   visibility?: string;
 

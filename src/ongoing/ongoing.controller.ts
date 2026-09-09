@@ -75,6 +75,13 @@ export class OngoingController {
     return this.ongoingService.generateSchedule(id, req.user);
   }
 
+  @Post(':id/rotation/next-round')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  async advanceRotationRound(@Param('id') id: string, @Req() req: AuthedRequest): Promise<OngoingEventResponseDto> {
+    return this.ongoingService.advanceRotationRound(id, req.user);
+  }
+
   @Patch('games/:gameId')
   @UseGuards(JwtAuthGuard)
   async updateGameScore(

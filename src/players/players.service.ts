@@ -6,6 +6,13 @@ import { EventResponseDto } from '../events/dto/event-response.dto';
 import { FullPlayerResponseDto } from './dto/full-player-response.dto';
 import { PlayerStatisticsService } from '../statistics/player-statistics.service';
 
+// A player's display anonymity lives on the linked account, so every read that emits a name pulls
+// the flag alongside the stats.
+const PLAYER_INCLUDE = {
+  playerStats: true,
+  user: { select: { isAnonymous: true } },
+} as const;
+
 @Injectable()
 export class PlayersService {
   constructor(private prisma: PrismaService, private playerStatisticsService: PlayerStatisticsService) {}
@@ -37,9 +44,7 @@ export class PlayersService {
           },
         },
       },
-      include: {
-        playerStats: true,
-      },
+      include: PLAYER_INCLUDE,
     });
 
     return this.mapToResponseDto(player);
@@ -50,9 +55,7 @@ export class PlayersService {
       where: {
         active: true,
       },
-      include: {
-        playerStats: true,
-      },
+      include: PLAYER_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
 
@@ -65,9 +68,7 @@ export class PlayersService {
       where: {
         active: true,
       },
-      include: {
-        playerStats: true,
-      },
+      include: PLAYER_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
 
@@ -207,6 +208,8 @@ export class PlayersService {
       id: player.id,
       tgId: player.tgId,
       name: player.name,
+      // The stored name is returned as-is; clients decide how to display it. See PLAYER_INCLUDE.
+      isAnonymous: player.user?.isAnonymous ?? false,
       avatar: player.avatar,
       gender: player.gender,
       active: player.active,

@@ -60,7 +60,7 @@ Because `PrismaModule` is `@Global()`, `PrismaService` is injectable anywhere wi
 but every module imports `PrismaModule` explicitly anyway. The import is redundant; match the
 existing pattern in a new module rather than relying on the global.
 
-`src/main.ts` bootstraps with a hard-coded `app.listen(3000)` (it ignores `PORT`) and a fixed CORS
+`src/main.ts` bootstraps with `app.listen(process.env.PORT || 3000)` and a fixed CORS
 origin allow-list. There is **no authentication layer** — treat every endpoint as unauthenticated.
 
 Rating logic lives in two files: [`src/rankings/utils.ts`](src/rankings/utils.ts) (the pure
@@ -186,6 +186,15 @@ already says, and never leave a comment that a reader could derive from the iden
 await tx.gamePlayerRank.deleteMany({ where: { gameId: { in: gameIds } } });
 ```
 
+### Player anonymity is a display flag
+
+`users.is_anonymous` never changes what is stored or returned. `players.name` keeps the real name,
+and every payload that names a player carries `isAnonymous` beside it — the frontend masks. When you
+add a read path that emits a player name, pull the flag with it (`PLAYER_INCLUDE`,
+`PLAYER_USER_SELECT`, `GAME_PLAYER_SELECT` are the existing selects) and expose both fields, or that
+surface silently un-masks the player. Do not mask server-side without saying so: the README documents
+the current contract and `/privacy` in the frontend is written against it.
+
 ### DRY — reuse before creating
 
 Before adding a helper, query, or DTO, search for one that already covers it. Player-stat
@@ -214,8 +223,16 @@ things:
 ## Testing
 
 Jest with `ts-jest`, `rootDir: src`, matching `*.spec.ts`. E2E specs use the separate
-`test/jest-e2e.json` config. Coverage is currently thin — `src/events/events.service.spec.ts` is the
-reference for new work.
+`test/jest-e2e.json` config.
+
+Coverage is concentrated in `src/ongoing`: `rotation.spec.ts`, `pairing.spec.ts`, `groups.spec.ts`,
+`bracket.spec.ts` and `schedule.spec.ts` cover the pure logic, and `ongoing.service.spec.ts` covers
+persistence and guards against a mocked Prisma. Those are the reference for new work here;
+`src/events/events.service.spec.ts` is the reference for the older, thinner modules.
+
+**Put scheme/format logic in a pure module with its own spec, not in the service.** `rotation.ts` is
+the pattern: the service supplies rosters and results, the module decides fixtures and ordering, and
+the arithmetic that must be exactly right is testable without a Prisma mock.
 
 ### Unit tests mock PrismaService
 

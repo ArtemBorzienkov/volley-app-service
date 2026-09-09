@@ -11,6 +11,7 @@ async function bootstrap() {
   const allowedOrigins = [
     'http://localhost:3000',
     'http://localhost:3001',
+    'http://localhost:3002',
     'http://127.0.0.1:8080',
     'http://64.227.120.106:8080',
     'https://waw-beach-volley.site',
@@ -53,8 +54,8 @@ async function bootstrap() {
     maxAge: 86400, // 24 hours
   });
 
-  await app.listen(3000);
-  console.log('Application is running on: http://localhost:3000');
+  await app.listen(process.env.PORT || 3000);
+  console.log(`Application is running on: http://localhost:${process.env.PORT || 3000}`);
   console.log('CORS enabled for origins:', allowedOrigins.join(', '));
 }
 bootstrap();

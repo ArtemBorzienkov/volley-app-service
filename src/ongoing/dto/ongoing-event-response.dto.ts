@@ -1,6 +1,8 @@
 export class OngoingTeamPlayerDto {
   id: string;
   name: string;
+  /** True when the account behind this player asked not to have their name published unmasked. */
+  isAnonymous: boolean;
   avatar?: string;
 }
 
@@ -43,6 +45,10 @@ export class OngoingGameResponseDto {
   bracketRound: number | null;
   bracketSlot: number | null;
   thirdPlace: boolean;
+  /** fullRotation only: the group this fixture belongs to, and who was on each side of it. */
+  groupIndex: number | null;
+  side1Players: OngoingTeamPlayerDto[];
+  side2Players: OngoingTeamPlayerDto[];
 }
 
 export class OngoingEventConfigResponseDto {
@@ -52,8 +58,43 @@ export class OngoingEventConfigResponseDto {
   scheme: string;
   groupCount: number;
   qualifiersPerGroup: number | null;
+  rotationRounds: number;
   visibility: string;
   allowSoloRegistration: boolean;
+}
+
+export class OngoingRotationStandingDto {
+  place: number;
+  player: OngoingTeamPlayerDto;
+  rating: number;
+  played: number;
+  wins: number;
+  losses: number;
+  pointsFor: number;
+  pointsAgainst: number;
+  pointsDiff: number;
+}
+
+export class OngoingRotationGroupDto {
+  groupIndex: number;
+  standings: OngoingRotationStandingDto[];
+}
+
+export class OngoingRotationRoundDto {
+  round: number;
+  isComplete: boolean;
+  groups: OngoingRotationGroupDto[];
+}
+
+export class OngoingRotationStateDto {
+  totalRounds: number;
+  /** 0 until the first round is generated. */
+  currentRound: number;
+  /** True once the last round has every result — at which point finalStandings is the podium. */
+  isFinished: boolean;
+  rounds: OngoingRotationRoundDto[];
+  /** Every player in final order: strongest group first, each group in its finishing order. */
+  finalStandings: OngoingRotationStandingDto[];
 }
 
 export class OngoingEventResponseDto {
@@ -70,11 +111,15 @@ export class OngoingEventResponseDto {
   teams: OngoingTeamResponseDto[];
   soloPlayers: OngoingSoloPlayerDto[];
   games: OngoingGameResponseDto[];
+  /** Present only for the fullRotation scheme; null for the other two. */
+  rotation: OngoingRotationStateDto | null;
 }
 
 export class OngoingEventCreatorDto {
   id: string;
   name: string;
+  /** The organiser is an account too, and may have opted out of being named publicly. */
+  isAnonymous: boolean;
 }
 
 export class OngoingEventListItemDto {
@@ -113,4 +158,8 @@ export class OngoingOpenEventDto {
   visibility: string;
   allowSoloRegistration: boolean;
   soloPlayers: OngoingSoloPlayerDto[];
+  // fullRotation caps its roster at groupCount x 4 players rather than by maxTeams, so the calendar
+  // needs both to work out whether a tournament still has room.
+  scheme: string;
+  groupCount: number;
 }

@@ -58,6 +58,7 @@ export class EventMembersService {
       include: {
         player: {
           include: {
+            user: { select: { isAnonymous: true } },
             playerStats: true,
           },
         },
@@ -129,6 +130,7 @@ export class EventMembersService {
           id: eventMember.player.id,
           tgId: eventMember.player.tgId,
           name: eventMember.player.name,
+          isAnonymous: eventMember.player.user?.isAnonymous ?? false,
           avatar: eventMember.player.avatar,
           gender: eventMember.player.gender,
           active: eventMember.player.active,

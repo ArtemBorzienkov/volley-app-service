@@ -20,11 +20,11 @@ model Player {
   createdAt DateTime @default(now()) @map("created_at")
 
   // Relations - games where player is in team1
-  team1GamesAsPlayer1   Game[]              @relation("Team1Player1")
-  team1GamesAsPlayer2   Game[]              @relation("Team1Player2")
+  team1GamesAsPlayer1   Game[]                @relation("Team1Player1")
+  team1GamesAsPlayer2   Game[]                @relation("Team1Player2")
   // Relations - games where player is in team2
-  team2GamesAsPlayer1   Game[]              @relation("Team2Player1")
-  team2GamesAsPlayer2   Game[]              @relation("Team2Player2")
+  team2GamesAsPlayer1   Game[]                @relation("Team2Player1")
+  team2GamesAsPlayer2   Game[]                @relation("Team2Player2")
   // Relations - event memberships
   eventMembers          EventMember[]
   // Relations - created events
@@ -34,10 +34,12 @@ model Player {
   // Relations - game player ranks
   gamePlayerRanks       GamePlayerRank[]
   // Relations - ongoing tournament teams
-  ongoingTeamsAsPlayer1 OngoingTeam[]       @relation("OngoingTeamPlayer1")
-  ongoingTeamsAsPlayer2 OngoingTeam[]       @relation("OngoingTeamPlayer2")
+  ongoingTeamsAsPlayer1 OngoingTeam[]         @relation("OngoingTeamPlayer1")
+  ongoingTeamsAsPlayer2 OngoingTeam[]         @relation("OngoingTeamPlayer2")
   // Relations - solo (partnerless) tournament registrations
-  ongoingSoloEntries    OngoingSoloPlayer[] @relation("OngoingSoloPlayer")
+  ongoingSoloEntries    OngoingSoloPlayer[]   @relation("OngoingSoloPlayer")
+  ongoingGameSides      OngoingGamePlayer[]   @relation("OngoingGamePlayer")
+  ongoingRotationSlots  OngoingRotationSlot[] @relation("OngoingRotationSlot")
   // Relations - auth account linked to this player (optional, 1:1)
   user                  User?
 
@@ -153,10 +155,11 @@ model OngoingEvent {
   createdByUserId String? @map("created_by_user_id")
   createdByUser   User?   @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
 
-  config      OngoingEventConfig?
-  teams       OngoingTeam[]
-  games       OngoingGame[]
-  soloPlayers OngoingSoloPlayer[]
+  config        OngoingEventConfig?
+  teams         OngoingTeam[]
+  games         OngoingGame[]
+  soloPlayers   OngoingSoloPlayer[]
+  rotationSlots OngoingRotationSlot[]
 
   @@index([date])
   @@map("ongoing_events")
@@ -171,6 +174,8 @@ model OngoingEventConfig {
   scheme             String @default("roundRobin")
   groupCount         Int    @default(1) @map("group_count")
   qualifiersPerGroup Int?   @map("qualifiers_per_group")
+  // fullRotation only: how many promote/relegate rounds the event runs before the podium is taken.
+  rotationRounds     Int    @default(3) @map("rotation_rounds")
 
   visibility            String  @default("public")
   allowSoloRegistration Boolean @default(false) @map("allow_solo_registration")
@@ -224,6 +229,8 @@ model OngoingGame {
   court        Int
   order        Int
   phase        String   @default("group")
+  // fullRotation only: the group whose three fixtures this game is one of.
+  groupIndex   Int?     @map("group_index")
   bracketRound Int?     @map("bracket_round")
   bracketSlot  Int?     @map("bracket_slot")
   thirdPlace   Boolean  @default(false) @map("third_place")
@@ -234,19 +241,63 @@ model OngoingGame {
   team1 OngoingTeam? @relation("OngoingGameTeam1", fields: [team1Id], references: [id], onDelete: Cascade)
   team2 OngoingTeam? @relation("OngoingGameTeam2", fields: [team2Id], references: [id], onDelete: Cascade)
 
+  sidePlayers OngoingGamePlayer[]
+
   @@index([eventId])
   @@map("ongoing_games")
 }
 
+// Who played on which side of a game. Populated for fullRotation games only: there the partners
+// change every game, so a side is an ad-hoc pair rather than one of the event's OngoingTeam rows.
+model OngoingGamePlayer {
+  id       String @id @default(uuid())
+  gameId   String @map("game_id")
+  playerId String @map("player_id")
+  side     Int
+
+  game   OngoingGame @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  player Player      @relation("OngoingGamePlayer", fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@unique([gameId, playerId])
+  @@index([gameId])
+  @@map("ongoing_game_players")
+}
+
+// A player's group for one round of a fullRotation event. Rewritten per round rather than updated,
+// so the promote/relegate history stays readable after the event is over.
+model OngoingRotationSlot {
+  id         String   @id @default(uuid())
+  eventId    String   @map("event_id")
+  playerId   String   @map("player_id")
+  round      Int
+  groupIndex Int      @map("group_index")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  event  OngoingEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  player Player       @relation("OngoingRotationSlot", fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, round, playerId])
+  @@index([eventId, round])
+  @@map("ongoing_rotation_slots")
+}
+
 model User {
-  id        String    @id @default(uuid())
-  email     String    @unique
-  name      String
-  password  String
-  role      String    @default("player") // 'admin' | 'player', enforced in application code
-  playerId  String?   @unique @map("player_id")
-  lastVisit DateTime? @map("last_visit")
-  createdAt DateTime  @default(now()) @map("created_at")
+  id               String    @id @default(uuid())
+  email            String    @unique
+  // Legacy: accounts created before sign-up stopped asking for a name. New rows leave it null and
+  // the display name is resolved from the linked player instead.
+  name             String?
+  telegramNickname String?   @map("telegram_nickname")
+  // A display preference, not a data change: `players.name` keeps the real name and clients render a
+  // masked form of it. What this opts out of is having that name published unmasked.
+  isAnonymous      Boolean   @default(false) @map("is_anonymous")
+  // GDPR art. 7(1): the controller must be able to demonstrate when consent was given.
+  dataConsentAt    DateTime? @map("data_consent_at")
+  password         String
+  role             String    @default("player") // 'admin' | 'player', enforced in application code
+  playerId         String?   @unique @map("player_id")
+  lastVisit        DateTime? @map("last_visit")
+  createdAt        DateTime  @default(now()) @map("created_at")
 
   player               Player?        @relation(fields: [playerId], references: [id], onDelete: SetNull)
   ongoingEventsCreated OngoingEvent[]

@@ -36,6 +36,10 @@ export class CreateOngoingEventDto {
   qualifiersPerGroup?: number;
 
   @IsOptional()
+  @IsInt()
+  rotationRounds?: number;
+
+  @IsOptional()
   @IsString()
   visibility?: string;
 

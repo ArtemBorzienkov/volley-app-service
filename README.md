@@ -17,6 +17,8 @@ Built with **NestJS 9** + **Prisma 4** on **PostgreSQL**.
 - [Architecture & modules](#architecture--modules)
 - [Data model (Prisma schema)](#data-model-prisma-schema)
 - [API reference](#api-reference)
+- [Ongoing tournaments & schemes](#ongoing-tournaments--schemes)
+- [Player anonymity](#player-anonymity--a-display-flag-not-stored-anonymisation)
 - [The rating engine](#the-rating-engine)
 - [Player statistics: two sources of truth](#player-statistics-two-sources-of-truth)
 - [Getting started (development)](#getting-started-development)
@@ -83,7 +85,7 @@ tournament is created.
 
 ```
 src/
-  main.ts                 # bootstrap: CORS allow-list, listens on :3000
+  main.ts                 # bootstrap: CORS allow-list, listens on $PORT (default 3000)
   app.module.ts           # root module
   prisma/                 # PrismaService + module
   players/                # /players
@@ -105,7 +107,7 @@ scripts/
 
 ## Data model (Prisma schema)
 
-Defined in [`prisma/schema.prisma`](prisma/schema.prisma). Six models:
+Defined in [`prisma/schema.prisma`](prisma/schema.prisma). The original six models:
 
 - **Player** (`players`) — `id`, optional Telegram `tgId`, `name`, `avatar`,
   `gender`, `active`. Has relations to all four game "slots", event memberships,
@@ -124,6 +126,37 @@ Defined in [`prisma/schema.prisma`](prisma/schema.prisma). Six models:
 - **GamePlayerRank** (`game_player_rank`) — the **rating audit chain**: one row per
   (game, player) with `rank` (the player's rating *after* that game) and
   `rankChange` (the delta applied). Rebuilt wholesale by `agregateRankings()`.
+
+Accounts and live tournaments were added later and live in their own models:
+
+- **User** (`users`) — `email`, hashed `password`, `role` (`admin` | `player`),
+  an optional `telegramNickname`, `isAnonymous`, `dataConsentAt`, and a unique
+  optional link to a `Player`.
+  Sign-up asks for the nickname, not a name: the display name is resolved from the
+  linked player (see [`src/user/display-name.ts`](src/user/display-name.ts)), so
+  `name` is a nullable legacy column that new rows leave empty.
+  `dataConsentAt` records when the account agreed to the published processing
+  (GDPR art. 7(1)); sign-up refuses without it. `isAnonymous` is a **display**
+  preference — see below.
+- **OngoingEvent** (`ongoing_events`) — a tournament being run live, with its
+  creator, `finishedAt`, and the relations below.
+- **OngoingEventConfig** (`ongoing_event_config`) — one row per event: `courts`,
+  `gamesPerPair`, `maxTeams`, `visibility` (`public` | `private`),
+  `allowSoloRegistration`, and the scheme fields `scheme`, `groupCount`,
+  `qualifiersPerGroup`, `rotationRounds`.
+- **OngoingTeam** (`ongoing_teams`) — a registered pair plus its `groupIndex`.
+- **OngoingSoloPlayer** (`ongoing_solo_players`) — a player registered without a
+  partner. Unique per `(eventId, playerId)`; it is also the **roster** of a
+  `fullRotation` event, where players are the entry unit.
+- **OngoingGame** (`ongoing_games`) — a fixture: optional `team1Id`/`team2Id`,
+  points, `round`, `court`, `order`, `phase` (`group` | `playoff` | `rotation`),
+  bracket coordinates, and `groupIndex` for rotation fixtures.
+- **OngoingGamePlayer** (`ongoing_game_players`) — who played on which `side` of a
+  game. Populated for `rotation` games only: there a side is an ad-hoc pair rather
+  than one of the event's `OngoingTeam` rows.
+- **OngoingRotationSlot** (`ongoing_rotation_slots`) — a player's `groupIndex` for
+  one `round` of a rotation event. Unique per `(eventId, round, playerId)`, and
+  written per round so the promote/relegate history stays readable afterwards.
 
 ---
 
@@ -222,6 +255,145 @@ female‑only and male‑only sub‑lists, each independently re‑ranked 1..N.
 
 ---
 
+### Accounts — `/user`, `/auth`
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/user` | Sign up. Requires `acceptDataProcessing: true`; optional `telegramNickname` and `isAnonymous`. Links an existing `playerId` **or** creates a `newPlayer`, never both. The frontend's sign-up form does **not** offer `isAnonymous` — the flag is set out of band (see [Player anonymity](#player-anonymity--a-display-flag-not-stored-anonymisation)). |
+| `GET` | `/user/me` | The signed-in account. |
+| `POST` | `/auth/log-in` | Sets the `access_token` cookie. |
+| `POST` | `/auth/log-out` | Clears it, idempotently. |
+
+```jsonc
+// POST /user
+{
+  "email": "player@example.com",
+  "password": "at-least-8-chars",
+  "acceptDataProcessing": true,   // required — results are published under a player's name
+  "isAnonymous": false,           // optional — accepted, but the sign-up form does not send it
+  "telegramNickname": "@nickname",// optional, 5-32 letters/digits/underscores
+  "newPlayer": { "name": "Player Name", "gender": "male" }
+}
+```
+
+## Ongoing tournaments & schemes
+
+`/ongoing` runs a tournament live: register entrants, generate fixtures, record
+scores, and read the standings back. Every write is guarded by `JwtAuthGuard` and
+by `assertCanManage` (the event's creator, or an admin). A roster locks as soon as
+any game has a result (`assertPlanning`).
+
+### Endpoints — `/ongoing`
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/ongoing` | Unfinished events, newest first. |
+| `GET` | `/ongoing/open` | Events still open for registration (no result recorded, date not passed). Full ones are **included** — the client disables its own control. |
+| `GET` | `/ongoing/:id` | One event with config, roster, fixtures and, for `fullRotation`, the whole ladder. |
+| `POST` | `/ongoing` | Create an event, optionally with a roster and a scheme. |
+| `PATCH` | `/ongoing/:id/config` | Update courts, caps, visibility and scheme fields. |
+| `POST` | `/ongoing/:id/teams` / `PUT /ongoing/:id/teams` | Add or replace pairs. Refused for `fullRotation`. |
+| `POST` | `/ongoing/:id/solo` | Register a player without a partner. |
+| `DELETE` | `/ongoing/solo/:soloId` | Cancel a partnerless registration. |
+| `GET` | `/ongoing/:id/solo/preview` | Preview the rating-based pairing of the solo pool. |
+| `POST` | `/ongoing/:id/solo/form-teams` | Turn the solo pool into pairs. |
+| `POST` | `/ongoing/:id/schedule` | Generate the fixtures. For `fullRotation` this generates **round 1 only**. |
+| `POST` | `/ongoing/:id/rotation/next-round` | `fullRotation` only: build the next round from this one's results. |
+| `POST` | `/ongoing/:id/playoff` | `groupsPlayoff` only: seed the bracket from the group tables. |
+| `PATCH` | `/ongoing/games/:gameId` | Record a score. |
+| `DELETE` | `/ongoing/games/:gameId/result` | Clear a score. |
+
+### The three schemes
+
+`OngoingEventConfig.scheme` decides how fixtures are built. It is validated in one
+place — `normaliseScheme` — which also forces the fields the scheme does not use.
+
+**`roundRobin`** (default) — one flat table. `groupCount` is forced to `1` and
+`qualifiersPerGroup` to `null`; every pair meets every other pair `gamesPerPair`
+times.
+
+**`groupsPlayoff`** — pairs are dealt into `groupCount` groups, each plays a
+round-robin, then the top `qualifiersPerGroup` of each group seed a knockout
+bracket. `groupCount × qualifiersPerGroup` must be a power of two.
+
+**`fullRotation`** — an individual format: players enter alone and change partner
+every game.
+
+- **Entry unit is the player.** `allowSoloRegistration` is forced on, and
+  `addTeam`/`setTeams` are refused. The roster is `OngoingSoloPlayer`, capped at
+  `groupCount × 4` — `maxTeams` counts pairs and does not apply.
+- **Groups of exactly four.** `groupCount` must be `2` or `3` (8 or 12 players),
+  and the roster has to fill every group exactly: a group of three or five has no
+  three-fixture rotation, so a partial field cannot be scheduled at all.
+- **Three fixtures per group**, so every player partners every other player once
+  and opposes each of them twice:
+  `p1+p2 v p3+p4`, `p1+p3 v p2+p4`, `p1+p4 v p2+p3`.
+  Those sides are stored in `OngoingGamePlayer`, not as `OngoingTeam` rows — which
+  is why a rotation game is exempt from the "both teams must be known" guard on
+  `PATCH /ongoing/games/:gameId`.
+- **Round 1 is seeded by rating** (`PlayerStats.rank`, ties broken on `playerId` so
+  a re-seed is deterministic): strongest four into group 0, which is the strongest
+  rung of the ladder.
+- **A round ends when all its games have results.** The top two of each group then
+  go up and the bottom two go down; the ends of the ladder have nowhere to go, so
+  the strongest group keeps its top two and the weakest keeps its bottom two. Every
+  group still holds four afterwards.
+- **`rotationRounds`** (default `3`) is how many rounds run. After the last one the
+  strongest group's table is the result, and `rotation.finalStandings` lists every
+  player — strongest group first, each group in its finishing order.
+- **Standings are computed, never stored.** `rankGroupPlayers` orders a group by
+  wins, then point difference, then points scored, then `playerId`; a corrected
+  score reshuffles the tables immediately.
+
+The pure logic lives in [`src/ongoing/rotation.ts`](src/ongoing/rotation.ts) with
+its own tests; the service only supplies rosters and results and persists what
+comes back.
+
+```jsonc
+// POST /ongoing — a full-rotation event
+{
+  "name": "Thursday Rotation",
+  "date": "2026-09-24T00:00:00.000Z",
+  "scheme": "fullRotation",
+  "groupCount": 3,        // 2 or 3 → 8 or 12 players
+  "rotationRounds": 4     // optional, default 3
+}
+```
+
+---
+
+## Player anonymity — a display flag, not stored anonymisation
+
+`users.is_anonymous` says the account asked not to have its name published in full.
+It changes **nothing about what is stored or returned**:
+
+- `players.name` keeps the real name. No write path rewrites it, and none should.
+- Every payload that names a player carries `isAnonymous` beside `name`, and the
+  **real name still travels**. `PlayerResponseDto`, `OngoingTeamPlayerDto`,
+  `PlayerGameRowPlayerDto` and the rankings rows all expose the pair.
+- **The frontend does the masking**, at the point of display —
+  `lib/player-name.ts` there turns `Artem Borzienkov` into `Ar*** Bo***`.
+
+That split is deliberate, and its consequence has to be understood before relying
+on it: because masking is client-side, **the real name of an anonymous player is
+still readable from the public API** (`GET /players` and friends have no auth). The
+flag reduces how visibly a name is published on the site; it is not technical
+anonymisation, and `/privacy` in the frontend says so in as many words. If the
+requirement ever becomes "the name must not leave the server", the masking has to
+move into these mappers — the flag and the DTO field are already in place for it.
+
+**Nothing in the UI sets the flag.** Sign-up used to offer a checkbox and no longer does, so
+`is_anonymous` is turned on out of band — directly, or by whatever admin path is added later. The
+frontend's `/privacy` therefore tells players to ask the controller rather than promising a
+self-service toggle; keep the two in step if a control is reintroduced.
+
+The flag is resolved from the linked account on every read that emits a name.
+`PLAYER_INCLUDE` (players), `PLAYER_USER_SELECT` (ongoing) and
+`GAME_PLAYER_SELECT` (games) each pull `user: { select: { isAnonymous: true } }`
+alongside the stats; a player with no account reads as not anonymous.
+
+---
+
 ## The rating engine
 
 The heart of the service. It is an **ELO‑like team rating** using fixed
@@ -310,7 +482,7 @@ npm install
 npm run prisma:generate
 npm run prisma:migrate:dev
 
-# 4. run the API (listens on http://localhost:3000)
+# 4. run the API (listens on $PORT, default 3000)
 npm run start:dev      # watch mode
 ```
 
@@ -325,7 +497,8 @@ npm run format         # prettier
 npm run prisma:studio  # browse the DB in Prisma Studio
 ```
 
-> **Port:** `src/main.ts` hard‑codes `app.listen(3000)` (it ignores `PORT`).
+> **Port:** `src/main.ts` listens on `process.env.PORT || 3000`. `.env` may set `PORT`, so check
+> it before assuming 3000 — and keep it clear of whatever port the frontend dev server uses.
 > When running the UI locally, run the front‑end on a different port to avoid a
 > clash and point its `NEXT_PUBLIC_HOST_URL` at `http://localhost:3000`.
 
@@ -389,15 +562,26 @@ npm run test:e2e    # e2e tests (test/*.e2e-spec.ts)
 npm run test:cov    # coverage
 ```
 
-The test scaffolding is the NestJS default (`test/app.e2e-spec.ts`); domain test
-coverage is currently minimal.
+Unit tests mock `PrismaService` — there is **no test database**, and
+`agregateRankings()` would rewrite every ranking in whatever `DATABASE_URL` points
+at. The e2e scaffolding is still the NestJS default (`test/app.e2e-spec.ts`).
+
+The `ongoing` module carries most of the coverage: `rotation.spec.ts`,
+`pairing.spec.ts`, `groups.spec.ts`, `bracket.spec.ts` and `schedule.spec.ts` test
+the pure logic directly, and `ongoing.service.spec.ts` tests the persistence and
+the guards around it.
 
 ---
 
 ## Known quirks & caveats
 
-- **No authentication.** Every endpoint is open; CORS is the only gate and is
-  restricted to a fixed origin allow‑list in `src/main.ts`.
+- **Authentication is partial.** `/auth`, `/user` and `/ongoing` are behind a JWT
+  cookie (`access_token`, `JwtAuthGuard`), but the older `/players`, `/events`,
+  `/games`, `/event-members` and `/rankings` routes are still open — CORS is the
+  only gate there, restricted to a fixed origin allow-list in `src/main.ts`.
+- **No global `ValidationPipe`.** `main.ts` never calls `useGlobalPipes`, so DTO
+  decorators are inert except where a controller registers the pipe itself
+  (`/auth`, `/user`, `/ongoing` do). Services validate their own input.
 - **Ratings only update via events.** Creating/editing/deleting games through
   `/games` updates `PlayerStats` totals but **not** `game_player_rank` — those
   ratings go stale until the next `agregateRankings` run.
