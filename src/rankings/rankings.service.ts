@@ -843,8 +843,15 @@ export class RankingsService {
     },
   ): Promise<void> {
     const { team1Player1, team1Player2, team2Player1, team2Player2 } = game;
-    const { team1Player1Change, team1Player2Change, team2Player1Change, team2Player2Change } =
-      getRanksChangesByGameResult(game);
+    const changes = getRanksChangesByGameResult(game);
+
+    // A drawn score moves nobody's rating, and getRanksChangesByGameResult says so by returning
+    // nothing. Guarded rather than destructured blind: team1_points/team2_points both DEFAULT 0, so
+    // an unscored row is a 0-0 draw, and this runs inside agregateRankings' per-game transaction —
+    // a TypeError here would abort a destructive full replay part-way through.
+    if (!changes) return;
+
+    const { team1Player1Change, team1Player2Change, team2Player1Change, team2Player2Change } = changes;
 
     // Log rank changes
     console.log(

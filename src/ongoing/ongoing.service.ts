@@ -86,8 +86,10 @@ const EVENT_INCLUDE = {
 // A game "has a result" only once BOTH scores are recorded — updateGameScore always writes them
 // together and clearGameResult always nulls them together. assertPlanning (DB count) and findOpen
 // (in-memory scan) must agree on this exact condition, or the Calendar page could offer registration
-// on a tournament that addTeam then rejects with a 409. Capacity is deliberately NOT part of that
-// agreement: a full tournament stays listed, and the client disables its registration control.
+// on a tournament that addTeam then rejects with a 409. The calendar no longer hides a started
+// tournament — it lists it with hasStarted set — so the agreement is now between that flag and this
+// guard rather than between an omission and this guard. Capacity and the date are likewise reported
+// rather than filtered: the client disables its own registration control.
 // Note: `NOT: { team1Points: null, team2Points: null }` would express "NOT (both null)", i.e. "at
 // least one filled" (De Morgan's law) — not "both filled". ANDing two `{ not: null }` filters is the
 // correct translation of isGamePlayed below.
@@ -446,6 +448,10 @@ export class OngoingService {
 
   async findOpen(): Promise<OngoingOpenEventDto[]> {
     const events = await this.prisma.ongoingEvent.findMany({
+      // Everything still running. A tournament that has started, or whose date has passed, stays on
+      // the calendar so anyone can follow it; only a finished one drops off. The `finishedAt` filter
+      // is now load-bearing — it used to be implied by the played-game check below.
+      where: { finishedAt: null },
       orderBy: { date: 'asc' },
       include: { ...EVENT_INCLUDE, createdByUser: { select: CREATOR_SELECT } },
     });
@@ -453,13 +459,9 @@ export class OngoingService {
     const open: OngoingOpenEventDto[] = [];
 
     for (const event of events) {
-      const hasResult = event.games.some((game) => isGamePlayed(game));
-      if (hasResult) continue;
-      if (!this.isRegistrationDateOpen(event.date)) continue;
-
-      // A full tournament is NOT filtered out: the calendar lists it with registration disabled and a
-      // "no spots left" note. maxTeams, teamsCount and soloPlayers all travel in the payload so the
-      // client can work out fullness itself; addTeam stays the enforcement point.
+      // Neither fullness nor having started filters a tournament out: the calendar lists it and the
+      // client decides what to offer. hasStarted and registrationOpen travel in the payload so it can
+      // say why registration is closed; addTeam/addSoloPlayer stay the enforcement point.
       const maxTeams = event.config ? event.config.maxTeams : null;
 
       open.push({
@@ -487,6 +489,8 @@ export class OngoingService {
         soloPlayers: event.soloPlayers.map((solo) => this.mapSoloPlayer(solo)),
         scheme: event.config && event.config.scheme !== undefined ? event.config.scheme : 'roundRobin',
         groupCount: event.config && event.config.groupCount !== undefined ? event.config.groupCount : 1,
+        hasStarted: event.games.some((game) => isGamePlayed(game)),
+        registrationOpen: this.isRegistrationDateOpen(event.date),
       });
     }
 
@@ -1042,6 +1046,15 @@ export class OngoingService {
     if (!event.games.length || !event.games.every((game) => isGamePlayed(game))) {
       throw new ConflictException('Not every game has a result yet; the tournament is not finished');
     }
+
+    // fullRotation generates one round at a time, so "every game played" is satisfied by round 1 of
+    // 3 while the ladder has decided nothing. Mirrors the frontend's own finish gate.
+    if (event.config.scheme === 'fullRotation' && !event.rotation?.isFinished) {
+      throw new ConflictException(
+        `Round ${event.rotation?.currentRound ?? 0} of ${event.rotation?.totalRounds ?? 0} is played; ` +
+          'every round must be complete before a fullRotation tournament is finished',
+      );
+    }
   }
 
   async updateGameScore(
@@ -1050,7 +1063,7 @@ export class OngoingService {
     currentUser: JwtPayload,
   ): Promise<OngoingGameResponseDto> {
     const game = await this.loadGame(gameId);
-    await this.assertCanManageEvent(game.eventId, currentUser);
+    await this.assertCanRecordResult(game.eventId, currentUser);
 
     // Nest always delivers {} for an empty HTTP body; this guards direct service invocation only, mirroring updateConfig/setTeams.
     if (!updateOngoingGameScoreDto) {
@@ -1116,7 +1129,7 @@ export class OngoingService {
 
   async clearGameResult(gameId: string, currentUser: JwtPayload): Promise<OngoingGameResponseDto> {
     const game = await this.loadGame(gameId);
-    await this.assertCanManageEvent(game.eventId, currentUser);
+    await this.assertCanRecordResult(game.eventId, currentUser);
 
     // Rule 3: same lock as updateGameScore — a group result cannot move once the playoff exists.
     if (game.phase === 'group') {
@@ -1371,12 +1384,42 @@ export class OngoingService {
     }
   }
 
-  private async assertCanManageEvent(eventId: string, currentUser: JwtPayload): Promise<void> {
+  /**
+   * Recording a result is open to the tournament's own entrants, not just its organiser: at a real
+   * event whoever is free walks over and enters the score. "Involved" means the caller's player is on
+   * a roster, in the solo pool, or in a rotation group of this event.
+   *
+   * Deliberately per-event, not per-game — a rotation player changes partner every fixture, and a
+   * team player is only ever on two of their group's courts.
+   */
+  private async assertCanRecordResult(eventId: string, currentUser: JwtPayload): Promise<void> {
     const event = await this.prisma.ongoingEvent.findUnique({
       where: { id: eventId },
-      select: { createdByUserId: true },
+      select: {
+        createdByUserId: true,
+        teams: { select: { player1Id: true, player2Id: true } },
+        soloPlayers: { select: { playerId: true } },
+        rotationSlots: { select: { playerId: true } },
+      },
     });
-    this.assertCanManage(event?.createdByUserId ?? null, currentUser);
+
+    if (!event) {
+      throw new NotFoundException(`Ongoing event with ID ${eventId} not found`);
+    }
+    if (this.canManage(event.createdByUserId, currentUser)) return;
+
+    const currentUserRecord = await this.userService.findById(currentUser.sub);
+    const playerId = currentUserRecord?.playerId ?? null;
+
+    const entrants = new Set<string>([
+      ...event.teams.flatMap((team) => [team.player1Id, team.player2Id]),
+      ...event.soloPlayers.map((solo) => solo.playerId),
+      ...event.rotationSlots.map((slot) => slot.playerId),
+    ]);
+
+    if (!playerId || !entrants.has(playerId)) {
+      throw new ForbiddenException('Only this tournament\'s entrants and its organiser can record results');
+    }
   }
 
   private validateTeamPairs(pairs: Array<{ player1Id: string; player2Id: string }>): string[] {

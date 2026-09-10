@@ -13,6 +13,7 @@ const EVENT_ROW = {
   config: { gamesPerPair: 1, courts: 2, visibility: 'public', allowSoloRegistration: false },
   teams: [],
   soloPlayers: [],
+  rotationSlots: [],
   games: [],
 };
 
@@ -1639,7 +1640,7 @@ describe('OngoingService', () => {
       await expect(service.finishTournament('event-1', NON_CREATOR_USER)).rejects.toThrow(ForbiddenException);
     });
 
-    it('updateGameScore() refuses a non-creator, non-admin user', async () => {
+    it('updateGameScore() refuses a user who is neither manager nor an entrant', async () => {
       prisma.ongoingGame.findUnique = jest.fn(
         async () => ({ eventId: 'event-1', team1Id: 't1', team2Id: 't2', phase: 'group' } as any),
       );
@@ -1649,7 +1650,7 @@ describe('OngoingService', () => {
       ).rejects.toThrow(ForbiddenException);
     });
 
-    it('clearGameResult() refuses a non-creator, non-admin user', async () => {
+    it('clearGameResult() refuses a user who is neither manager nor an entrant', async () => {
       prisma.ongoingGame.findUnique = jest.fn(
         async () => ({ eventId: 'event-1', team1Id: 't1', team2Id: 't2', phase: 'group' } as any),
       );
@@ -1806,26 +1807,40 @@ describe('OngoingService', () => {
       ...over,
     });
 
-    it('excludes a tournament whose date has passed', async () => {
+    it('still lists a tournament whose date has passed, marking registration closed', async () => {
       prisma.ongoingEvent.findMany = jest.fn(async () => [row({ date: past })] as any);
 
-      expect(await service.findOpen()).toEqual([]);
+      const [listed] = await service.findOpen();
+
+      expect(listed).toMatchObject({ registrationOpen: false, hasStarted: false });
     });
 
-    it('excludes a tournament that has a recorded result', async () => {
+    it('still lists a tournament that has started, marking it as such', async () => {
       prisma.ongoingEvent.findMany = jest.fn(
         async () => [row({ games: [{ team1Points: 15, team2Points: 7 }] })] as any,
       );
 
-      expect(await service.findOpen()).toEqual([]);
+      const [listed] = await service.findOpen();
+
+      expect(listed).toMatchObject({ hasStarted: true, registrationOpen: true });
     });
 
-    it('includes a tournament whose fixtures exist but are all unplayed', async () => {
+    it('asks the database only for unfinished tournaments — a finished one drops off entirely', async () => {
+      await service.findOpen();
+
+      const args = (prisma.ongoingEvent.findMany as jest.Mock).mock.calls[0][0];
+      expect(args.where).toEqual({ finishedAt: null });
+    });
+
+    it('reports a tournament whose fixtures exist but are all unplayed as not started', async () => {
       prisma.ongoingEvent.findMany = jest.fn(
         async () => [row({ games: [{ team1Points: null, team2Points: null }] })] as any,
       );
 
-      expect(await service.findOpen()).toHaveLength(1);
+      const listed = await service.findOpen();
+
+      expect(listed).toHaveLength(1);
+      expect(listed[0].hasStarted).toBe(false);
     });
 
     // Full tournaments stay listed on purpose: the calendar shows them with registration disabled and
@@ -1868,12 +1883,12 @@ describe('OngoingService', () => {
   });
 
   describe('OngoingService — "started" agreement between findOpen and addTeam', () => {
-    // Both guards must treat a game as "played" only once BOTH scores are recorded. This pins that
-    // agreement to the single shared predicate (isGamePlayed) so the two call sites cannot silently
-    // drift apart again.
+    // Both guards must treat a game as "played" only once BOTH scores are recorded. findOpen no longer
+    // hides a started tournament — it flags it — so the agreement being pinned here is that the flag
+    // the calendar reads and the rejection addTeam issues come from the same isGamePlayed predicate.
     const playedGame = { team1Points: 15, team2Points: 7 };
 
-    it('findOpen excludes, and addTeam rejects, the exact same played-game fixture', async () => {
+    it('findOpen flags as started, and addTeam rejects, the exact same played-game fixture', async () => {
       prisma.ongoingEvent.findMany = jest.fn(
         async () =>
           [
@@ -1883,12 +1898,14 @@ describe('OngoingService', () => {
               date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
               config: { gamesPerPair: 1, courts: 1, maxTeams: null },
               teams: [],
+              soloPlayers: [],
               games: [playedGame],
             },
           ] as any,
       );
 
-      expect(await service.findOpen()).toEqual([]);
+      const [listed] = await service.findOpen();
+      expect(listed).toMatchObject({ id: 'e', hasStarted: true });
 
       prisma.ongoingEvent.findUnique = jest.fn(
         async () =>
@@ -4195,5 +4212,262 @@ describe('OngoingService player anonymity', () => {
     const event = await service.findOne('event-1');
 
     expect(event.soloPlayers[0].player.isAnonymous).toBe(false);
+  });
+});
+
+describe('OngoingService — who may record a result', () => {
+  let service: OngoingService;
+  let prisma: any;
+  let userService: { findById: jest.Mock };
+
+  const ORGANISER = { sub: 'organiser-1', email: 'o@example.com', role: 'player', jti: 'j', iat: 0, exp: 0 };
+  const OUTSIDER = { ...ORGANISER, sub: 'outsider-1' };
+  const ADMIN = { ...ORGANISER, sub: 'admin-1', role: 'admin' };
+
+  /** The shape assertCanRecordResult selects — rosters by id, no nested player rows. */
+  const eventRow = (over: Record<string, unknown> = {}) => ({
+    createdByUserId: 'organiser-1',
+    teams: [],
+    soloPlayers: [],
+    rotationSlots: [],
+    ...over,
+  });
+
+  const playedGame = { id: 'game-1', eventId: 'event-1', team1Id: 't1', team2Id: 't2', phase: 'group' };
+
+  const build = async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        OngoingService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: UserService, useValue: userService },
+      ],
+    }).compile();
+    return module.get<OngoingService>(OngoingService);
+  };
+
+  beforeEach(async () => {
+    prisma = {
+      ongoingEvent: { findUnique: jest.fn(async () => eventRow()) },
+      ongoingGame: {
+        findUnique: jest.fn(async () => playedGame),
+        update: jest.fn(async (args: any) => ({ ...playedGame, ...args.data })),
+        findFirst: jest.fn(async () => null),
+        count: jest.fn(async () => 0),
+        aggregate: jest.fn(async () => ({ _max: { bracketRound: null } })),
+      },
+      $transaction: jest.fn(),
+    };
+    prisma.$transaction = jest.fn(async (cb: any) => cb(prisma));
+    // The outsider has a player, just not one entered in this tournament.
+    userService = { findById: jest.fn(async () => ({ playerId: 'p-outsider' } as any)) };
+    service = await build();
+  });
+
+  const record = (user: typeof ORGANISER) =>
+    service.updateGameScore('game-1', { team1Points: 21, team2Points: 15 }, user);
+
+  it('lets the organiser record, as before', async () => {
+    await expect(record(ORGANISER)).resolves.toBeDefined();
+  });
+
+  it('lets an admin record even though they entered nothing', async () => {
+    await expect(record(ADMIN)).resolves.toBeDefined();
+  });
+
+  it('lets a player on one of the teams record', async () => {
+    prisma.ongoingEvent.findUnique = jest.fn(async () =>
+      eventRow({ teams: [{ player1Id: 'p-outsider', player2Id: 'p9' }] }),
+    );
+
+    await expect(record(OUTSIDER)).resolves.toBeDefined();
+  });
+
+  it('lets a player entered as player2 record — both sides of a pair count', async () => {
+    prisma.ongoingEvent.findUnique = jest.fn(async () =>
+      eventRow({ teams: [{ player1Id: 'p9', player2Id: 'p-outsider' }] }),
+    );
+
+    await expect(record(OUTSIDER)).resolves.toBeDefined();
+  });
+
+  it('lets a player waiting in the solo pool record', async () => {
+    prisma.ongoingEvent.findUnique = jest.fn(async () =>
+      eventRow({ soloPlayers: [{ playerId: 'p-outsider' }] }),
+    );
+
+    await expect(record(OUTSIDER)).resolves.toBeDefined();
+  });
+
+  it('lets a player in a rotation group record', async () => {
+    prisma.ongoingEvent.findUnique = jest.fn(async () =>
+      eventRow({ rotationSlots: [{ playerId: 'p-outsider' }] }),
+    );
+
+    await expect(record(OUTSIDER)).resolves.toBeDefined();
+  });
+
+  it('lets an entrant record a game they were not on themselves', async () => {
+    // The entrant is in the tournament but this fixture is between two other teams: still allowed,
+    // because at a real event whoever is free walks over and enters the score.
+    prisma.ongoingEvent.findUnique = jest.fn(async () =>
+      eventRow({ teams: [{ player1Id: 'p-outsider', player2Id: 'p9' }] }),
+    );
+    prisma.ongoingGame.findUnique = jest.fn(async () => ({ ...playedGame, team1Id: 't7', team2Id: 't8' }));
+
+    await expect(record(OUTSIDER)).resolves.toBeDefined();
+  });
+
+  it('refuses a logged-in stranger', async () => {
+    await expect(record(OUTSIDER)).rejects.toThrow(ForbiddenException);
+    expect(prisma.ongoingGame.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses an account with no linked player, even if that player id is somehow on a roster', async () => {
+    userService.findById = jest.fn(async () => ({ playerId: null } as any));
+    prisma.ongoingEvent.findUnique = jest.fn(async () =>
+      eventRow({ teams: [{ player1Id: 'p-outsider', player2Id: 'p9' }] }),
+    );
+
+    await expect(record(OUTSIDER)).rejects.toThrow(ForbiddenException);
+  });
+
+  it('404s rather than 403s when the event behind the game is gone', async () => {
+    prisma.ongoingEvent.findUnique = jest.fn(async () => null);
+
+    await expect(record(OUTSIDER)).rejects.toThrow(NotFoundException);
+  });
+
+  it('applies the same rule to clearing a result', async () => {
+    prisma.ongoingEvent.findUnique = jest.fn(async () =>
+      eventRow({ soloPlayers: [{ playerId: 'p-outsider' }] }),
+    );
+
+    await expect(service.clearGameResult('game-1', OUTSIDER)).resolves.toBeDefined();
+
+    prisma.ongoingEvent.findUnique = jest.fn(async () => eventRow());
+    await expect(service.clearGameResult('game-1', OUTSIDER)).rejects.toThrow(ForbiddenException);
+  });
+});
+
+describe('OngoingService.finishTournament — fullRotation', () => {
+  let service: OngoingService;
+  let prisma: any;
+
+  const ORGANISER = { sub: 'organiser-1', email: 'o@example.com', role: 'player', jti: 'j', iat: 0, exp: 0 };
+
+  const slots = (round: number) =>
+    ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'].map((playerId, index) => ({
+      id: `s-${round}-${playerId}`,
+      playerId,
+      round,
+      groupIndex: index < 4 ? 0 : 1,
+      player: { id: playerId, name: playerId, avatar: null, playerStats: { rank: 1000 } },
+    }));
+
+  /** Six played fixtures — the whole of one rotation round across two groups. */
+  const games = (round: number) =>
+    [0, 1].flatMap((groupIndex) =>
+      [0, 1, 2].map((order) => ({
+        id: `g-${round}-${groupIndex}-${order}`,
+        eventId: 'event-1',
+        team1Id: null,
+        team2Id: null,
+        team1Points: 21,
+        team2Points: 15,
+        round,
+        court: order + 1,
+        order,
+        phase: 'rotation',
+        groupIndex,
+        bracketRound: null,
+        bracketSlot: null,
+        thirdPlace: false,
+        sidePlayers: [],
+      })),
+    );
+
+  const eventRow = (rotationRounds: number, roundsPlayed: number) => ({
+    id: 'event-1',
+    name: 'Rotation Cup',
+    date: new Date('2026-09-20T00:00:00.000Z'),
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    createdByUserId: 'organiser-1',
+    config: {
+      gamesPerPair: 1,
+      courts: 1,
+      maxTeams: null,
+      scheme: 'fullRotation',
+      groupCount: 2,
+      qualifiersPerGroup: null,
+      rotationRounds,
+      visibility: 'public',
+      allowSoloRegistration: true,
+    },
+    teams: [],
+    soloPlayers: [],
+    games: Array.from({ length: roundsPlayed }, (_, i) => games(i + 1)).flat(),
+    rotationSlots: Array.from({ length: roundsPlayed }, (_, i) => slots(i + 1)).flat(),
+  });
+
+  const load = (rotationRounds: number, roundsPlayed: number) => {
+    prisma.ongoingEvent.findUnique = jest.fn(async () => eventRow(rotationRounds, roundsPlayed));
+  };
+
+  beforeEach(async () => {
+    prisma = {
+      ongoingEvent: {
+        findUnique: jest.fn(async () => eventRow(1, 1)),
+        update: jest.fn(async () => ({})),
+      },
+      ongoingGame: { count: jest.fn(async () => 0) },
+      $transaction: jest.fn(),
+    };
+    prisma.$transaction = jest.fn(async (cb: any) => cb(prisma));
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        OngoingService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: UserService, useValue: { findById: jest.fn() } },
+      ],
+    }).compile();
+
+    service = module.get<OngoingService>(OngoingService);
+  });
+
+  it('finishes once the last round is complete', async () => {
+    load(1, 1);
+
+    await expect(service.finishTournament('event-1', ORGANISER)).resolves.toBeDefined();
+    expect(prisma.ongoingEvent.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { finishedAt: expect.any(Date) } }),
+    );
+  });
+
+  it('refuses while rounds remain, even though every generated game is played', async () => {
+    // Round 1 of 3: the old "every game has a result" check passes, but the ladder has decided
+    // nothing and the placements would be empty.
+    load(3, 1);
+
+    await expect(service.finishTournament('event-1', ORGANISER)).rejects.toThrow(
+      /Round 1 of 3 is played; every round must be complete/,
+    );
+    expect(prisma.ongoingEvent.update).not.toHaveBeenCalled();
+  });
+
+  it('finishes on the last of several rounds', async () => {
+    load(3, 3);
+
+    await expect(service.finishTournament('event-1', ORGANISER)).resolves.toBeDefined();
+  });
+
+  it('still refuses when a fixture has no result', async () => {
+    const row = eventRow(1, 1);
+    row.games[0].team1Points = null as never;
+    prisma.ongoingEvent.findUnique = jest.fn(async () => row);
+
+    await expect(service.finishTournament('event-1', ORGANISER)).rejects.toThrow(/Not every game has a result/);
   });
 });

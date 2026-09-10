@@ -288,7 +288,7 @@ any game has a result (`assertPlanning`).
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/ongoing` | Unfinished events, newest first. |
-| `GET` | `/ongoing/open` | Events still open for registration (no result recorded, date not passed). Full ones are **included** — the client disables its own control. |
+| `GET` | `/ongoing/open` | Every **unfinished** tournament, for the calendar. Nothing is filtered by state: a started one, a past-dated one and a full one are all listed, carrying `hasStarted`, `registrationOpen`, `maxTeams`/`teamsCount`/`soloPlayers` so the client can say why registration is unavailable. `addTeam`/`addSoloPlayer` stay the enforcement point. |
 | `GET` | `/ongoing/:id` | One event with config, roster, fixtures and, for `fullRotation`, the whole ladder. |
 | `POST` | `/ongoing` | Create an event, optionally with a roster and a scheme. |
 | `PATCH` | `/ongoing/:id/config` | Update courts, caps, visibility and scheme fields. |
@@ -300,8 +300,35 @@ any game has a result (`assertPlanning`).
 | `POST` | `/ongoing/:id/schedule` | Generate the fixtures. For `fullRotation` this generates **round 1 only**. |
 | `POST` | `/ongoing/:id/rotation/next-round` | `fullRotation` only: build the next round from this one's results. |
 | `POST` | `/ongoing/:id/playoff` | `groupsPlayoff` only: seed the bracket from the group tables. |
-| `PATCH` | `/ongoing/games/:gameId` | Record a score. |
-| `DELETE` | `/ongoing/games/:gameId/result` | Clear a score. |
+| `PATCH` | `/ongoing/games/:gameId` | Record a score — open to the tournament's **entrants** as well as its organiser/admins (see below). |
+| `DELETE` | `/ongoing/games/:gameId/result` | Clear a score — same rule as recording one. |
+
+### Who may do what
+
+Everything under `/ongoing` needs a session. Beyond that there are two levels:
+
+- **Manage** (`assertCanManage`) — the event's creator or an admin. Config, roster, schedule and
+  playoff generation, finishing, deleting.
+- **Record a result** (`assertCanRecordResult`) — manage, **or** an entrant of that tournament: a
+  player on one of its pairs, in its solo pool, or in one of its rotation groups. At a real event
+  whoever is free walks over and enters the score, so this is deliberately per-event rather than
+  per-game — a rotation player changes partner every fixture, and a pair only ever plays two of
+  their group's courts.
+
+A player can also always withdraw their own entry (`assertOwnEntryOrManager`), up to the day before.
+
+### After the tournament: handing over to `/events`
+
+An ongoing tournament is working state, not the archive. When it is finished the frontend builds a
+prefill, the organiser reviews it on `/add-results`, and `POST /events/with-games` writes the real
+`events`, `games` and `game_player_rank` rows. **Once that returns 2xx the client deletes the
+ongoing event** (`DELETE /ongoing/:id`), and the FK cascade clears every `ongoing_*` table —
+config, teams, solo players, games, game players and rotation slots.
+
+The delete is a second request rather than part of the upload, because `POST /events/with-games` has
+no authentication and must not become a way to destroy a tournament. The cost is that it is not
+atomic: if the browser dies in between, a finished `ongoing_events` row survives. That row is
+harmless — `finishedAt` keeps it out of `/ongoing` and `/ongoing/open` — and can be deleted by hand.
 
 ### The three schemes
 
@@ -415,6 +442,15 @@ in [`rankings/utils.ts`](src/rankings/utils.ts) and
    - Losing as the **favorite** is heavily penalized; big mismatches
      (`rankDifference > 1000`) use fixed extremes (`MIN 3` / `MAX 30`).
    - It is zero‑sum in magnitude per side: winners `+X`, losers `−X`.
+
+   **Sign and size are independent, and conflating them has bitten twice.** Who won
+   decides the sign; whether the result was expected decides the size. Both bugs let
+   a losing team *gain* rating: a stray minus made the widest bucket's
+   `biggerChange` negative (a beaten favourite came out at `+2`, the winning
+   underdog at `−2`), and `getMaxRankChange` applied only a team1/team2 sign, never
+   the win/loss one, so above a 1000‑point gap every team1 loss paid `+30`.
+   [`src/rankings/utils.spec.ts`](src/rankings/utils.spec.ts) now sweeps every
+   bucket boundary and a grid of rating pairings asserting the invariant directly.
 5. **New‑player boost:** a player with **fewer than 10 total games** has their delta
    **doubled** — provisional placement so newcomers converge faster. (Computed per
    player, so teammates can receive different magnitudes.)
@@ -566,6 +602,12 @@ Unit tests mock `PrismaService` — there is **no test database**, and
 `agregateRankings()` would rewrite every ranking in whatever `DATABASE_URL` points
 at. The e2e scaffolding is still the NestJS default (`test/app.e2e-spec.ts`).
 
+The rating engine is covered by [`src/rankings/utils.spec.ts`](src/rankings/utils.spec.ts) (the pure
+change table: every bucket boundary, favourite/underdog on both outcomes, the newcomer multiplier,
+draws, missing stats, and a rating grid asserting a loser never gains) and
+[`src/rankings/rankings.service.spec.ts`](src/rankings/rankings.service.spec.ts) (what actually
+reaches `game_player_rank`).
+
 The `ongoing` module carries most of the coverage: `rotation.spec.ts`,
 `pairing.spec.ts`, `groups.spec.ts`, `bracket.spec.ts` and `schedule.spec.ts` test
 the pure logic directly, and `ongoing.service.spec.ts` tests the persistence and
@@ -590,9 +632,13 @@ the guards around it.
   change to game ordering or rating logic.
 - **Stats can drift** between the stored `PlayerStats` columns and the on‑the‑fly
   computation (see [above](#player-statistics-two-sources-of-truth)).
-- **`getRankChangeByRankDifference` has no `rankDifference === 0` branch** — two
-  non‑blowout teams with *exactly equal* rating sums can return `undefined` and
-  throw when the caller destructures it.
+- **A drawn score returns nothing from `getRanksChangesByGameResult`**, and
+  `updatePlayersRankByGameResult` now guards for it instead of destructuring blind.
+  It matters because `team1_points`/`team2_points` both `DEFAULT 0`, so an unscored
+  row is a 0‑0 draw — and the destructure happens inside `agregateRankings`'
+  per‑game transaction, where a `TypeError` aborts a destructive replay part‑way
+  through. (An earlier note here blamed a missing `rankDifference === 0` branch;
+  that was wrong — 0 is covered by the `<= 100` bucket.)
 - **`setsWon` / `setsLost` are placeholders** — the schema removed per‑set scores
   (games store only total points), so these fields are never populated (they read
   as `0`, and `/rankings/sets` actually ranks by win count).

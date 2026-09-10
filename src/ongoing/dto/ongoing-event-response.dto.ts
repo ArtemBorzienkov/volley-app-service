@@ -162,4 +162,8 @@ export class OngoingOpenEventDto {
   // needs both to work out whether a tournament still has room.
   scheme: string;
   groupCount: number;
+  /** A result has been recorded, so the roster is locked — the calendar still lists it. */
+  hasStarted: boolean;
+  /** The registration deadline (end of the day before the tournament) has not passed yet. */
+  registrationOpen: boolean;
 }

@@ -15,17 +15,30 @@ const RANK_CHANGE_MULTIPLIER = 2;
 const getRankChangeByPlayer = (rankChange: number, gamesNumber: number) =>
   gamesNumber >= 10 ? rankChange : rankChange * RANK_CHANGE_MULTIPLIER;
 
+/**
+ * The change for a gap wider than MAX_RANK_DIFFERENCE, where the buckets below stop applying.
+ *
+ * Two things decide it, and they are independent: the SIGN is who won (a losing team always loses
+ * rating), the SIZE is whether the result was expected (an upset moves 30, a formality moves 3).
+ * Conflating them is what made a losing favourite *gain* 30 here.
+ */
 const getMaxRankChange = (isTeam1Favorite: boolean, isTeam1Won: boolean, isFromTeam1: boolean) => {
-  let rankChange;
-  if (isTeam1Favorite) {
-    rankChange = isTeam1Won ? MIN_RANK_CHANGE : MAX_RANK_CHANGE;
-  } else {
-    rankChange = isTeam1Won ? MAX_RANK_CHANGE : MIN_RANK_CHANGE;
-  }
-  return isFromTeam1 ? rankChange : -rankChange;
+  const favoriteWon = isTeam1Favorite === isTeam1Won;
+  const magnitude = favoriteWon ? MIN_RANK_CHANGE : MAX_RANK_CHANGE;
+  const team1Change = isTeam1Won ? magnitude : -magnitude;
+
+  return isFromTeam1 ? team1Change : -team1Change;
 };
 
-export const getRankChangeByRankDifference = (rankDifference) => {
+/**
+ * Magnitudes for a rating gap of 0..MAX_RANK_DIFFERENCE, as unsigned sizes — the caller applies the
+ * sign from who won. `lowerChange` is what the expected result is worth, `biggerChange` what the
+ * upset is worth, so the wider the gap the less a favourite gains and the more an underdog does.
+ *
+ * The final branch is an unconditional return rather than another `if`, so no gap can fall through
+ * and hand the caller `undefined` to destructure.
+ */
+export const getRankChangeByRankDifference = (rankDifference: number) => {
   if (rankDifference <= 100) {
     return {
       biggerChange: AVG_RANK_CHANGE,
@@ -50,35 +63,35 @@ export const getRankChangeByRankDifference = (rankDifference) => {
   if (rankDifference > 300 && rankDifference <= 400) {
     return {
       lowerChange: AVG_RANK_CHANGE - 5, // 10
-      biggerChange: AVG_RANK_CHANGE + 5, // -20
+      biggerChange: AVG_RANK_CHANGE + 5, // 20
     };
   }
 
   if (rankDifference > 400 && rankDifference <= 500) {
     return {
       lowerChange: AVG_RANK_CHANGE - 6, // 9
-      biggerChange: AVG_RANK_CHANGE + 6, // -21
+      biggerChange: AVG_RANK_CHANGE + 6, // 21
     };
   }
 
   if (rankDifference > 500 && rankDifference <= 600) {
     return {
       lowerChange: AVG_RANK_CHANGE - 7, // 8
-      biggerChange: AVG_RANK_CHANGE + 7, // -22
+      biggerChange: AVG_RANK_CHANGE + 7, // 22
     };
   }
 
   if (rankDifference > 600 && rankDifference <= 700) {
     return {
       lowerChange: AVG_RANK_CHANGE - 8, // 7
-      biggerChange: AVG_RANK_CHANGE + 8, // -23
+      biggerChange: AVG_RANK_CHANGE + 8, // 23
     };
   }
 
   if (rankDifference > 700 && rankDifference <= 800) {
     return {
       lowerChange: AVG_RANK_CHANGE - 9, // 6
-      biggerChange: AVG_RANK_CHANGE + 9, // -24
+      biggerChange: AVG_RANK_CHANGE + 9, // 24
     };
   }
 
@@ -89,12 +102,10 @@ export const getRankChangeByRankDifference = (rankDifference) => {
     };
   }
 
-  if (rankDifference > 900 && rankDifference <= 1000) {
-    return {
-      lowerChange: AVG_RANK_CHANGE - 13, // 4
-      biggerChange: -AVG_RANK_CHANGE + 13, // -28
-    };
-  }
+  return {
+    lowerChange: AVG_RANK_CHANGE - 13, // 2
+    biggerChange: AVG_RANK_CHANGE + 13, // 28
+  };
 };
 
 export const getRanksChangesByGameResult = (game: {
@@ -119,7 +130,6 @@ export const getRanksChangesByGameResult = (game: {
   // Calculate team sums
   const team1Sum = team1Player1Rank + team1Player2Rank;
   const team2Sum = team2Player1Rank + team2Player2Rank;
-  const isEqualTeams = team1Sum === team2Sum;
   const isTeam1Favorite = team1Sum > team2Sum;
 
   // Handle tie games - no rank change

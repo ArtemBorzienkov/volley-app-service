@@ -100,6 +100,18 @@ Consequences that bite:
   `POST /rankings/agregate-rankings`, **per database**. Local and deployed DBs must be aggregated
   independently.
 
+### Rating sign versus rating size
+
+In `src/rankings/utils.ts`, **who won decides the sign and how expected the result was decides the
+size** — they are independent, and two separate bugs came from mixing them, each letting a losing
+team gain rating. `getRankChangeByRankDifference` returns unsigned magnitudes (`lowerChange` for the
+expected result, `biggerChange` for the upset) and the caller applies the sign. Never write a minus
+into that table, and never let `getMaxRankChange` return a magnitude without the win/loss sign.
+
+`utils.spec.ts` pins the invariant across every bucket and a grid of rating pairings; run it before
+touching any of those numbers. Changing them only affects stored data after
+`POST /rankings/agregate-rankings` is re-run **per database**.
+
 ### Foreign keys around deletion
 
 `game_player_rank_game_id_fkey` is **`ON DELETE RESTRICT`**, and it is the newest migration, so it
