@@ -11,6 +11,11 @@ export class CreateOngoingEventDto {
   @IsArray()
   teams?: Array<{ player1Id: string; player2Id: string }>;
 
+  /** Player ids to seed the partnerless pool with. Requires allowSoloRegistration. */
+  @IsOptional()
+  @IsArray()
+  soloPlayers?: string[];
+
   @IsOptional()
   @IsInt()
   maxTeams?: number;

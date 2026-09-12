@@ -12,12 +12,16 @@ export class OngoingTeamResponseDto {
   player2: OngoingTeamPlayerDto;
   rating: number;
   groupIndex: number | null;
+  /** When this entry was made — a real instant, unlike the tournament's date-only `date`. */
+  registeredAt: Date;
 }
 
 export class OngoingSoloPlayerDto {
   id: string;
   player: OngoingTeamPlayerDto;
   rating: number;
+  /** When this entry was made — a real instant, unlike the tournament's date-only `date`. */
+  registeredAt: Date;
 }
 
 export class OngoingSoloPairDto {

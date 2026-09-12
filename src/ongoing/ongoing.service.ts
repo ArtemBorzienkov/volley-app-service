@@ -98,6 +98,9 @@ const PLAYED_GAME_WHERE = { team1Points: { not: null }, team2Points: { not: null
 // Three rounds is enough for the ladder to sort a field of 8-12; the organiser can change it.
 const DEFAULT_ROTATION_ROUNDS = 3;
 
+// With the default 2 groups this is a 4-team bracket — the smallest power-of-two playoff.
+const DEFAULT_QUALIFIERS_PER_GROUP = 2;
+
 // Rule 4: undoing a playoff result — by clearing it or by editing it to a different score — while its
 // successor already has a result is refused uniformly. A one-sentence rule ("undo the later round
 // first") beats one with a same-winner exception, and it closes the edit path the same way the clear
@@ -206,9 +209,31 @@ export class OngoingService {
       throw new BadRequestException('A fullRotation tournament registers individual players, not teams');
     }
 
+    const soloPlayerIds = this.validateInitialSoloPlayers(
+      createOngoingEventDto.soloPlayers,
+      teams,
+      allowSoloRegistration,
+    );
+
+    // The same capacity addSoloPlayer/addTeam enforce later — creating an already-overfull
+    // tournament would otherwise be a way around it.
+    if (scheme === 'fullRotation') {
+      const seats = groupCount * ROTATION_GROUP_SIZE;
+      if (soloPlayerIds.length > seats) {
+        throw new ConflictException(
+          `A fullRotation tournament with ${groupCount} groups seats ${seats} players, and ${soloPlayerIds.length} were given`,
+        );
+      }
+    } else if (maxTeams !== null && effectiveTeamCount(teams?.length ?? 0, soloPlayerIds.length) > maxTeams) {
+      throw new ConflictException('The initial roster exceeds maxTeams');
+    }
+
     if (teams && teams.length) {
       const playerIds = this.validateTeamPairs(teams);
       await this.assertPlayersExist(playerIds);
+    }
+    if (soloPlayerIds.length) {
+      await this.assertPlayersExist(soloPlayerIds);
     }
 
     const data: any = {
@@ -236,6 +261,9 @@ export class OngoingService {
       data.teams = {
         create: teams.map((team) => ({ player1Id: team.player1Id, player2Id: team.player2Id })),
       };
+    }
+    if (soloPlayerIds.length) {
+      data.soloPlayers = { create: soloPlayerIds.map((playerId) => ({ playerId })) };
     }
 
     const event = await this.prisma.ongoingEvent.create({ data, include: EVENT_INCLUDE });
@@ -1291,14 +1319,23 @@ export class OngoingService {
     if (!Number.isInteger(groups) || groups < 1) {
       throw new BadRequestException('groupsPlayoff needs at least 1 group');
     }
-    if (!Number.isInteger(qualifiersPerGroup) || qualifiersPerGroup < 1) {
+    // Defaulted, not required: the create form offers "groups + playoff" as a tournament type
+    // without asking for a bracket shape up front, and a tournament with no entrants yet has
+    // nothing to size one against. 2 per group pairs with the default 2 groups to give a
+    // power-of-two bracket, and updateConfig can change it before the playoff is generated.
+    const qualifiers =
+      qualifiersPerGroup === undefined || qualifiersPerGroup === null
+        ? DEFAULT_QUALIFIERS_PER_GROUP
+        : qualifiersPerGroup;
+
+    if (!Number.isInteger(qualifiers) || qualifiers < 1) {
       throw new BadRequestException('qualifiersPerGroup must be at least 1');
     }
-    if (!isPowerOfTwo(groups * qualifiersPerGroup)) {
+    if (!isPowerOfTwo(groups * qualifiers)) {
       throw new BadRequestException('groupCount times qualifiersPerGroup must be a power of two');
     }
 
-    return { scheme: resolved, groupCount: groups, qualifiersPerGroup, rotationRounds: rounds };
+    return { scheme: resolved, groupCount: groups, qualifiersPerGroup: qualifiers, rotationRounds: rounds };
   }
 
   private normaliseVisibility(value: string | undefined | null): string {
@@ -1422,6 +1459,49 @@ export class OngoingService {
     }
   }
 
+  /**
+   * The pool a tournament is created with. Enforces the same one-entry invariant addSoloPlayer does:
+   * a player is in a team or in the pool, never both, and never twice.
+   */
+  private validateInitialSoloPlayers(
+    soloPlayers: string[] | undefined,
+    teams: Array<{ player1Id: string; player2Id: string }> | undefined,
+    allowSoloRegistration: boolean,
+  ): string[] {
+    if (!soloPlayers) return [];
+    if (!Array.isArray(soloPlayers)) {
+      throw new BadRequestException('soloPlayers must be an array of player ids');
+    }
+    if (!soloPlayers.length) return [];
+
+    if (!allowSoloRegistration) {
+      throw new BadRequestException(
+        'This tournament does not accept registration without a partner; enable it or drop soloPlayers',
+      );
+    }
+
+    const seen = new Set<string>();
+    for (const playerId of soloPlayers) {
+      if (typeof playerId !== 'string' || !playerId) {
+        throw new BadRequestException('Every soloPlayers entry must be a player id');
+      }
+      if (seen.has(playerId)) {
+        throw new BadRequestException(`Player ${playerId} is listed twice without a partner`);
+      }
+      seen.add(playerId);
+    }
+
+    for (const team of teams ?? []) {
+      for (const playerId of [team.player1Id, team.player2Id]) {
+        if (seen.has(playerId)) {
+          throw new BadRequestException(`Player ${playerId} cannot be both in a team and without a partner`);
+        }
+      }
+    }
+
+    return soloPlayers;
+  }
+
   private validateTeamPairs(pairs: Array<{ player1Id: string; player2Id: string }>): string[] {
     const seen = new Set<string>();
 
@@ -1504,6 +1584,7 @@ export class OngoingService {
       id: solo.id,
       player: this.mapPlayer(solo.player),
       rating: solo.player.playerStats?.rank ?? 1000,
+      registeredAt: solo.createdAt,
     };
   }
 
@@ -1549,6 +1630,7 @@ export class OngoingService {
       player2: this.mapPlayer(team.player2),
       rating: (team.player1.playerStats?.rank ?? 1000) + (team.player2.playerStats?.rank ?? 1000),
       groupIndex: team.groupIndex ?? null,
+      registeredAt: team.createdAt,
     };
   }
 

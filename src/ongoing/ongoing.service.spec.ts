@@ -4471,3 +4471,250 @@ describe('OngoingService.finishTournament — fullRotation', () => {
     await expect(service.finishTournament('event-1', ORGANISER)).rejects.toThrow(/Not every game has a result/);
   });
 });
+
+describe('OngoingService.create — groupsPlayoff without a bracket shape', () => {
+  let service: OngoingService;
+  let prisma: any;
+
+  const CURRENT_USER = { sub: 'user-1', email: 'u@example.com', role: 'player', jti: 'j', iat: 0, exp: 0 };
+
+  beforeEach(async () => {
+    prisma = {
+      ongoingEvent: { create: jest.fn(async () => ({ id: 'e1', config: {}, teams: [], soloPlayers: [], games: [] })) },
+      player: { findMany: jest.fn(async (args: any) => args.where.id.in.map((id: string) => ({ id }))) },
+      $transaction: jest.fn(),
+    };
+    prisma.$transaction = jest.fn(async (cb: any) => cb(prisma));
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        OngoingService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: UserService, useValue: { findById: jest.fn() } },
+      ],
+    }).compile();
+
+    service = module.get<OngoingService>(OngoingService);
+  });
+
+  const create = (extra: Record<string, unknown> = {}) =>
+    service.create({ name: 'Cup', date: '2030-01-01T00:00:00.000Z', scheme: 'groupsPlayoff', ...extra } as any, CURRENT_USER);
+
+  const writtenConfig = () => prisma.ongoingEvent.create.mock.calls[0][0].data.config.create;
+
+  it('creates with no teams and no bracket numbers at all', async () => {
+    // The create form offers the scheme without asking for a shape; a tournament with no entrants
+    // yet has nothing to size one against, and teams register later.
+    await expect(create()).resolves.toBeDefined();
+
+    expect(writtenConfig()).toMatchObject({ scheme: 'groupsPlayoff', groupCount: 2, qualifiersPerGroup: 2 });
+  });
+
+  it('keeps a shape the organiser did choose', async () => {
+    await create({ groupCount: 4, qualifiersPerGroup: 2 });
+
+    expect(writtenConfig()).toMatchObject({ groupCount: 4, qualifiersPerGroup: 2 });
+  });
+
+  it('still rejects a qualifier count below one when given explicitly', async () => {
+    await expect(create({ groupCount: 2, qualifiersPerGroup: 0 })).rejects.toThrow(
+      new BadRequestException('qualifiersPerGroup must be at least 1'),
+    );
+  });
+
+  it('still rejects a bracket that is not a power of two', async () => {
+    await expect(create({ groupCount: 3, qualifiersPerGroup: 1 })).rejects.toThrow(
+      /power of two/,
+    );
+  });
+
+  it('defaults to a power-of-two bracket, so the default can never be rejected later', async () => {
+    await create();
+
+    const { groupCount, qualifiersPerGroup } = writtenConfig();
+    const seeds = groupCount * qualifiersPerGroup;
+    expect(seeds & (seeds - 1)).toBe(0);
+  });
+});
+
+describe('OngoingService.create — an initial pool of partnerless players', () => {
+  let service: OngoingService;
+  let prisma: any;
+
+  const CURRENT_USER = { sub: 'user-1', email: 'u@example.com', role: 'player', jti: 'j', iat: 0, exp: 0 };
+
+  beforeEach(async () => {
+    prisma = {
+      ongoingEvent: { create: jest.fn(async () => ({ id: 'e1', config: {}, teams: [], soloPlayers: [], games: [] })) },
+      player: { findMany: jest.fn(async (args: any) => args.where.id.in.map((id: string) => ({ id }))) },
+      $transaction: jest.fn(),
+    };
+    prisma.$transaction = jest.fn(async (cb: any) => cb(prisma));
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        OngoingService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: UserService, useValue: { findById: jest.fn() } },
+      ],
+    }).compile();
+
+    service = module.get<OngoingService>(OngoingService);
+  });
+
+  const create = (extra: Record<string, unknown>) =>
+    service.create({ name: 'Cup', date: '2030-01-01T00:00:00.000Z', ...extra } as any, CURRENT_USER);
+
+  const writtenData = () => prisma.ongoingEvent.create.mock.calls[0][0].data;
+
+  it('seeds the pool alongside a team roster', async () => {
+    await create({
+      allowSoloRegistration: true,
+      teams: [{ player1Id: 'p1', player2Id: 'p2' }],
+      soloPlayers: ['p3', 'p4'],
+    });
+
+    expect(writtenData().soloPlayers).toEqual({ create: [{ playerId: 'p3' }, { playerId: 'p4' }] });
+    expect(writtenData().teams).toEqual({ create: [{ player1Id: 'p1', player2Id: 'p2' }] });
+  });
+
+  it('seeds a pool with no teams at all', async () => {
+    await create({ allowSoloRegistration: true, soloPlayers: ['p1'] });
+
+    expect(writtenData().soloPlayers).toEqual({ create: [{ playerId: 'p1' }] });
+    expect(writtenData().teams).toBeUndefined();
+  });
+
+  it('checks the players exist', async () => {
+    await create({ allowSoloRegistration: true, soloPlayers: ['p1', 'p2'] });
+
+    expect(prisma.player.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: { in: ['p1', 'p2'] } } }));
+  });
+
+  it('refuses a pool on a tournament that does not accept partnerless entrants', async () => {
+    await expect(create({ allowSoloRegistration: false, soloPlayers: ['p1'] })).rejects.toThrow(
+      /does not accept registration without a partner/,
+    );
+    expect(prisma.ongoingEvent.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses the same player twice', async () => {
+    await expect(create({ allowSoloRegistration: true, soloPlayers: ['p1', 'p1'] })).rejects.toThrow(
+      /listed twice without a partner/,
+    );
+  });
+
+  it('refuses a player who is also in a team — one entry per player', async () => {
+    await expect(
+      create({ allowSoloRegistration: true, teams: [{ player1Id: 'p1', player2Id: 'p2' }], soloPlayers: ['p2'] }),
+    ).rejects.toThrow(/cannot be both in a team and without a partner/);
+  });
+
+  it('accepts an omitted or empty pool', async () => {
+    await expect(create({ allowSoloRegistration: true })).resolves.toBeDefined();
+    expect(writtenData().soloPlayers).toBeUndefined();
+
+    prisma.ongoingEvent.create.mockClear();
+    await expect(create({ allowSoloRegistration: true, soloPlayers: [] })).resolves.toBeDefined();
+    expect(writtenData().soloPlayers).toBeUndefined();
+  });
+
+  it('refuses a pool larger than the rotation seats', async () => {
+    await expect(
+      create({ scheme: 'fullRotation', groupCount: 2, soloPlayers: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i'] }),
+    ).rejects.toThrow(/seats 8 players, and 9 were given/);
+  });
+
+  it('accepts a pool that fills the rotation seats exactly', async () => {
+    await expect(
+      create({ scheme: 'fullRotation', groupCount: 2, soloPlayers: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] }),
+    ).resolves.toBeDefined();
+  });
+
+  it('counts the pool against maxTeams the way registration does', async () => {
+    // Two partnerless entrants will become one team, so 1 team + 2 solo = 2 against a cap of 2.
+    await expect(
+      create({ allowSoloRegistration: true, maxTeams: 2, teams: [{ player1Id: 'p1', player2Id: 'p2' }], soloPlayers: ['p3', 'p4'] }),
+    ).resolves.toBeDefined();
+
+    // 1 team + 4 partnerless = 1 + ceil(4/2) = 3, over a cap of 2. (A cap of 1 is rejected earlier:
+    // normaliseMaxTeams requires at least 2.)
+    await expect(
+      create({
+        allowSoloRegistration: true,
+        maxTeams: 2,
+        teams: [{ player1Id: 'p1', player2Id: 'p2' }],
+        soloPlayers: ['p3', 'p4', 'p5', 'p6'],
+      }),
+    ).rejects.toThrow(/exceeds maxTeams/);
+  });
+});
+
+describe('OngoingService — when each entry was made', () => {
+  let service: OngoingService;
+  let prisma: any;
+
+  const TEAM_AT = new Date('2026-09-01T18:30:00.000Z');
+  const SOLO_AT = new Date('2026-09-02T07:15:00.000Z');
+
+  beforeEach(async () => {
+    prisma = {
+      ongoingEvent: {
+        findUnique: jest.fn(async () => ({
+          id: 'event-1',
+          name: 'Cup',
+          date: new Date('2026-09-20T00:00:00.000Z'),
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          createdByUserId: 'u1',
+          config: { scheme: 'roundRobin', groupCount: 1, rotationRounds: 3, visibility: 'public' },
+          teams: [
+            {
+              id: 't1',
+              createdAt: TEAM_AT,
+              player1: { id: 'p1', name: 'Ann', avatar: null, playerStats: { rank: 1100 } },
+              player2: { id: 'p2', name: 'Bob', avatar: null, playerStats: { rank: 1000 } },
+              groupIndex: null,
+            },
+          ],
+          soloPlayers: [
+            { id: 's1', createdAt: SOLO_AT, player: { id: 'p3', name: 'Cid', avatar: null, playerStats: { rank: 900 } } },
+          ],
+          games: [],
+          rotationSlots: [],
+        })),
+      },
+      ongoingGame: { count: jest.fn(async () => 0) },
+      $transaction: jest.fn(),
+    };
+    prisma.$transaction = jest.fn(async (cb: any) => cb(prisma));
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        OngoingService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: UserService, useValue: { findById: jest.fn() } },
+      ],
+    }).compile();
+
+    service = module.get<OngoingService>(OngoingService);
+  });
+
+  it('reports when a team entered', async () => {
+    const event = await service.findOne('event-1');
+
+    expect(event.teams[0].registeredAt).toBe(TEAM_AT);
+  });
+
+  it('reports when a partnerless player entered', async () => {
+    const event = await service.findOne('event-1');
+
+    expect(event.soloPlayers[0].registeredAt).toBe(SOLO_AT);
+  });
+
+  it('keeps the two independent — they are separate entries', async () => {
+    const event = await service.findOne('event-1');
+
+    expect(event.teams[0].registeredAt).not.toEqual(event.soloPlayers[0].registeredAt);
+  });
+});
