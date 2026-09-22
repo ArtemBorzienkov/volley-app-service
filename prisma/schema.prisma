@@ -179,6 +179,13 @@ model OngoingEventConfig {
 
   visibility            String  @default("public")
   allowSoloRegistration Boolean @default(false) @map("allow_solo_registration")
+  // Pairs cannot register at all: everyone enters alone and the organiser forms the teams. Implies
+  // allowSoloRegistration, which the service forces on rather than trusting the caller to send both.
+  soloOnlyRegistration  Boolean @default(false) @map("solo_only_registration")
+
+  // Rule keys the organiser switched off for this tournament; everything not listed is shown. Storing
+  // the exclusions (not the inclusions) is what makes a rule added later appear on existing events.
+  hiddenRules String[] @default([]) @map("hidden_rules")
 
   event OngoingEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
 

@@ -115,6 +115,7 @@ describe('OngoingService', () => {
               rotationRounds: 3,
               visibility: 'public',
               allowSoloRegistration: false,
+              soloOnlyRegistration: false,
             },
           },
         },
@@ -163,6 +164,8 @@ describe('OngoingService', () => {
         courts: 2,
         visibility: 'public',
         allowSoloRegistration: false,
+        soloOnlyRegistration: false,
+        hiddenRules: [],
         maxTeams: null,
         scheme: 'roundRobin',
         groupCount: 1,
@@ -225,6 +228,8 @@ describe('OngoingService', () => {
           rotationRounds: 3,
           visibility: 'public',
           allowSoloRegistration: false,
+          soloOnlyRegistration: false,
+          hiddenRules: [],
         },
         update: {
           gamesPerPair: 2,
@@ -236,6 +241,8 @@ describe('OngoingService', () => {
           rotationRounds: 3,
           visibility: 'public',
           allowSoloRegistration: false,
+          soloOnlyRegistration: false,
+          hiddenRules: [],
         },
       });
     });
@@ -1953,6 +1960,7 @@ describe('OngoingService', () => {
         rotationRounds: 3,
         visibility: 'public',
         allowSoloRegistration: false,
+        soloOnlyRegistration: false,
       });
       expect(args.data.teams.create).toEqual([{ player1Id: 'p1', player2Id: 'p2' }]);
     });
@@ -2433,6 +2441,7 @@ describe('OngoingService', () => {
               rotationRounds: 3,
               visibility: 'public',
               allowSoloRegistration: false,
+              soloOnlyRegistration: false,
             },
           } as any),
       );
@@ -3317,13 +3326,26 @@ describe('OngoingService', () => {
   describe('OngoingService.removeTeam self-cancellation', () => {
     const PLAYER_USER = { sub: 'user-9', email: 'p9@example.com', role: 'player', jti: 'jti-9', iat: 0, exp: 0 };
 
-    const teamRow = (eventDate: Date) => ({
+    const teamRow = (eventDate: Date, startTime: string | null = null) => ({
       id: 'team-1',
       eventId: 'event-1',
       player1Id: 'p3',
       player2Id: 'p4',
-      event: { createdByUserId: 'user-1', date: eventDate },
+      event: { createdByUserId: 'user-1', date: eventDate, startTime },
     });
+
+    // The day the tournament starts on, so a start time can move the deadline within it.
+    const inDays = (days: number) => {
+      const day = new Date();
+      day.setUTCDate(day.getUTCDate() + days);
+      return new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate()));
+    };
+
+    /** "HH:MM" this many minutes from now, in the UTC frame eventStartInstant reads. */
+    const utcClock = (offsetMinutes: number) => {
+      const at = new Date(Date.now() + offsetMinutes * 60_000);
+      return `${String(at.getUTCHours()).padStart(2, '0')}:${String(at.getUTCMinutes()).padStart(2, '0')}`;
+    };
 
     it('lets a member remove their own team before the day of the tournament', async () => {
       prisma.ongoingTeam.findUnique = jest.fn(async () => teamRow(new Date('2999-01-01T00:00:00.000Z'))) as any;
@@ -3352,6 +3374,69 @@ describe('OngoingService', () => {
     it('refuses a player who is in neither slot', async () => {
       prisma.ongoingTeam.findUnique = jest.fn(async () => teamRow(new Date('2999-01-01T00:00:00.000Z'))) as any;
       userService.findById = jest.fn(async () => ({ playerId: 'p8' } as any));
+
+      await expect(service.removeTeam('team-1', PLAYER_USER)).rejects.toThrow(ForbiddenException);
+    });
+
+    // The 24-hour window, exercised either side of the boundary rather than at whole days: with a
+    // start time the deadline falls inside the day before, which the old day-granular rule allowed.
+    it('refuses a member once the tournament is less than 24 hours away', async () => {
+      // Tomorrow, starting ten minutes earlier in the day than the current clock — 23h50m from now.
+      prisma.ongoingTeam.findUnique = jest.fn(async () => teamRow(inDays(1), utcClock(-10))) as any;
+      userService.findById = jest.fn(async () => ({ playerId: 'p4' } as any));
+
+      await expect(service.removeTeam('team-1', PLAYER_USER)).rejects.toThrow(
+        'Registration can no longer be cancelled — the deadline was 24 hours before the tournament',
+      );
+    });
+
+    it('lets a member cancel while the tournament is still more than 24 hours away', async () => {
+      // Tomorrow, starting ten minutes later in the day — 24h10m from now, just inside the window.
+      prisma.ongoingTeam.findUnique = jest.fn(async () => teamRow(inDays(1), utcClock(10))) as any;
+      userService.findById = jest.fn(async () => ({ playerId: 'p4' } as any));
+
+      await service.removeTeam('team-1', PLAYER_USER);
+
+      expect(prisma.ongoingTeam.delete).toHaveBeenCalledWith({ where: { id: 'team-1' } });
+    });
+
+    // Pinned on a fixed clock: exactly 24 hours out is already closed, one second more is open.
+    describe('at the boundary', () => {
+      const START = new Date('2026-09-16T08:00:00.000Z');
+
+      afterEach(() => jest.useRealTimers());
+
+      const cancelAt = async (now: string) => {
+        jest.useFakeTimers({ doNotFake: ['nextTick'] });
+        jest.setSystemTime(new Date(now));
+        prisma.ongoingTeam.findUnique = jest.fn(async () =>
+          teamRow(new Date('2026-09-16T00:00:00.000Z'), '08:00'),
+        ) as any;
+        userService.findById = jest.fn(async () => ({ playerId: 'p4' } as any));
+        return service.removeTeam('team-1', PLAYER_USER);
+      };
+
+      it('is closed exactly 24 hours before the start', async () => {
+        await expect(cancelAt('2026-09-15T08:00:00.000Z')).rejects.toThrow(ForbiddenException);
+      });
+
+      it('is open one second earlier', async () => {
+        await cancelAt('2026-09-15T07:59:59.000Z');
+
+        expect(prisma.ongoingTeam.delete).toHaveBeenCalledWith({ where: { id: 'team-1' } });
+      });
+
+      // The whole point of reading startTime: under the old end-of-previous-day rule this instant
+      // was still cancellable.
+      it('is closed at midday the day before an 08:00 start', async () => {
+        await expect(cancelAt('2026-09-15T12:00:00.000Z')).rejects.toThrow(ForbiddenException);
+        expect(START.getUTCHours()).toBe(8);
+      });
+    });
+
+    it('refuses a member with an unreadable event date instead of letting the cancel through', async () => {
+      prisma.ongoingTeam.findUnique = jest.fn(async () => teamRow(new Date('not-a-date'))) as any;
+      userService.findById = jest.fn(async () => ({ playerId: 'p4' } as any));
 
       await expect(service.removeTeam('team-1', PLAYER_USER)).rejects.toThrow(ForbiddenException);
     });
@@ -3568,7 +3653,8 @@ describe('OngoingService fullRotation', () => {
   const buildEvent = (overrides: Record<string, unknown> = {}) => ({
     id: 'event-1',
     name: 'Rotation Cup',
-    date: new Date('2026-09-20T00:00:00.000Z'),
+    // Relative to now: a fixed date silently expires into "registration closed" once it passes.
+    date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     createdAt: new Date('2026-09-01T00:00:00.000Z'),
     updatedAt: new Date('2026-09-01T00:00:00.000Z'),
     createdByUserId: 'user-1',
@@ -3895,7 +3981,8 @@ describe('OngoingService fullRotation config', () => {
   const eventRow = (overrides: Record<string, unknown> = {}) => ({
     id: 'event-1',
     name: 'Cup',
-    date: new Date('2026-09-20T00:00:00.000Z'),
+    // Relative to now: a fixed date silently expires into "registration closed" once it passes.
+    date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     createdAt: new Date('2026-09-01T00:00:00.000Z'),
     updatedAt: new Date('2026-09-01T00:00:00.000Z'),
     createdByUserId: 'user-1',
@@ -3987,6 +4074,12 @@ describe('OngoingService fullRotation config', () => {
     await updateWith({ groupCount: 2, allowSoloRegistration: false });
 
     expect(prisma.ongoingEventConfig.upsert.mock.calls[0][0].update.allowSoloRegistration).toBe(true);
+  });
+
+  it('forces solo-only on too: the scheme has no pair entry path at all', async () => {
+    await updateWith({ groupCount: 2, soloOnlyRegistration: false });
+
+    expect(prisma.ongoingEventConfig.upsert.mock.calls[0][0].update.soloOnlyRegistration).toBe(true);
   });
 
   it('refuses to switch an event that already has pairs onto the scheme', async () => {
@@ -4139,7 +4232,8 @@ describe('OngoingService player anonymity', () => {
         findUnique: jest.fn(async () => ({
           id: 'event-1',
           name: 'Cup',
-          date: new Date('2026-09-20T00:00:00.000Z'),
+          // Relative to now: a fixed date silently expires into "registration closed" once it passes.
+    date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
           createdAt: new Date(),
           updatedAt: new Date(),
           createdByUserId: 'u1',
@@ -4198,7 +4292,8 @@ describe('OngoingService player anonymity', () => {
     prisma.ongoingEvent.findUnique = jest.fn(async () => ({
       id: 'event-1',
       name: 'Cup',
-      date: new Date('2026-09-20T00:00:00.000Z'),
+      // Relative to now: a fixed date silently expires into "registration closed" once it passes.
+    date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
       createdAt: new Date(),
       updatedAt: new Date(),
       createdByUserId: 'u1',
@@ -4390,7 +4485,8 @@ describe('OngoingService.finishTournament — fullRotation', () => {
   const eventRow = (rotationRounds: number, roundsPlayed: number) => ({
     id: 'event-1',
     name: 'Rotation Cup',
-    date: new Date('2026-09-20T00:00:00.000Z'),
+    // Relative to now: a fixed date silently expires into "registration closed" once it passes.
+    date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     createdAt: new Date(),
     updatedAt: new Date(),
     createdByUserId: 'organiser-1',
@@ -4663,7 +4759,8 @@ describe('OngoingService — when each entry was made', () => {
         findUnique: jest.fn(async () => ({
           id: 'event-1',
           name: 'Cup',
-          date: new Date('2026-09-20T00:00:00.000Z'),
+          // Relative to now: a fixed date silently expires into "registration closed" once it passes.
+    date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
           createdAt: new Date(),
           updatedAt: new Date(),
           createdByUserId: 'u1',
@@ -4716,5 +4813,210 @@ describe('OngoingService — when each entry was made', () => {
     const event = await service.findOne('event-1');
 
     expect(event.teams[0].registeredAt).not.toEqual(event.soloPlayers[0].registeredAt);
+  });
+});
+
+describe('OngoingService solo-only registration and rule toggles', () => {
+  let service: OngoingService;
+  let prisma: any;
+
+  const CURRENT_USER = { sub: 'user-1', email: 'user1@example.com', role: 'admin', jti: 'jti-1', iat: 0, exp: 0 };
+  const PLAYER_USER = { sub: 'user-9', email: 'p9@example.com', role: 'player', jti: 'jti-9', iat: 0, exp: 0 };
+
+  const eventRow = (config: Record<string, unknown> = {}, overrides: Record<string, unknown> = {}) => ({
+    id: 'event-1',
+    name: 'Cup',
+    date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    startTime: null,
+    createdAt: new Date('2026-09-01T00:00:00.000Z'),
+    updatedAt: new Date('2026-09-01T00:00:00.000Z'),
+    createdByUserId: 'user-1',
+    finishedAt: null,
+    config: {
+      gamesPerPair: 1,
+      courts: 1,
+      maxTeams: null,
+      scheme: 'roundRobin',
+      groupCount: 1,
+      qualifiersPerGroup: null,
+      rotationRounds: 3,
+      visibility: 'public',
+      allowSoloRegistration: false,
+      soloOnlyRegistration: false,
+      hiddenRules: [],
+      ...config,
+    },
+    teams: [],
+    soloPlayers: [],
+    games: [],
+    rotationSlots: [],
+    ...overrides,
+  });
+
+  beforeEach(async () => {
+    prisma = {
+      ongoingEvent: {
+        findUnique: jest.fn(async () => eventRow()),
+        create: jest.fn(async () => eventRow()),
+      },
+      ongoingEventConfig: { upsert: jest.fn(async () => ({})) },
+      ongoingTeam: { create: jest.fn(async () => ({})), deleteMany: jest.fn(), createMany: jest.fn() },
+      ongoingGame: { deleteMany: jest.fn(), count: jest.fn(async () => 0) },
+      ongoingSoloPlayer: { deleteMany: jest.fn(), create: jest.fn(async () => ({})) },
+      player: { findMany: jest.fn(async () => [{ id: 'p1' }, { id: 'p2' }]) },
+      $transaction: jest.fn(),
+    };
+    prisma.$transaction = jest.fn(async (cb: any) => cb(prisma));
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        OngoingService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: UserService, useValue: { findById: jest.fn(async () => ({ playerId: 'p1' } as any)) } },
+      ],
+    }).compile();
+
+    service = module.get<OngoingService>(OngoingService);
+  });
+
+  const updateWith = (extra: Record<string, unknown>) =>
+    service.updateConfig('event-1', { gamesPerPair: 1, courts: 1, scheme: 'roundRobin', ...extra } as any, CURRENT_USER);
+
+  const written = () => prisma.ongoingEventConfig.upsert.mock.calls[0][0].update;
+
+  describe('solo-only', () => {
+    it('turns solo registration on with it — the pool is the only way in', async () => {
+      await updateWith({ soloOnlyRegistration: true, allowSoloRegistration: false });
+
+      expect(written().soloOnlyRegistration).toBe(true);
+      expect(written().allowSoloRegistration).toBe(true);
+    });
+
+    it('leaves an ordinary tournament alone', async () => {
+      await updateWith({ allowSoloRegistration: true });
+
+      expect(written().soloOnlyRegistration).toBe(false);
+      expect(written().allowSoloRegistration).toBe(true);
+    });
+
+    it('refuses to close the pair path while pairs are registered', async () => {
+      prisma.ongoingEvent.findUnique = jest.fn(async () =>
+        eventRow(
+          {},
+          {
+            teams: [
+              {
+                id: 't1',
+                player1: { id: 'p1', name: 'A', playerStats: { rank: 1000 } },
+                player2: { id: 'p2', name: 'B', playerStats: { rank: 1000 } },
+                groupIndex: null,
+              },
+            ],
+          },
+        ),
+      );
+
+      await expect(updateWith({ soloOnlyRegistration: true })).rejects.toThrow(
+        /clear the roster before switching it to solo-only/,
+      );
+      expect(prisma.ongoingEventConfig.upsert).not.toHaveBeenCalled();
+    });
+
+    it('rejects a pair registration, entrant and organiser alike', async () => {
+      prisma.ongoingEvent.findUnique = jest.fn(async () =>
+        eventRow({ soloOnlyRegistration: true, allowSoloRegistration: true }),
+      );
+
+      for (const user of [PLAYER_USER, CURRENT_USER]) {
+        await expect(
+          service.addTeam('event-1', { player1Id: 'p1', player2Id: 'p2' }, user),
+        ).rejects.toThrow('This tournament registers individual players; register without a partner instead');
+      }
+      expect(prisma.ongoingTeam.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects a create that seeds pairs', async () => {
+      await expect(
+        service.create(
+          {
+            name: 'Cup',
+            date: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+            soloOnlyRegistration: true,
+            teams: [{ player1Id: 'p1', player2Id: 'p2' }],
+          } as any,
+          CURRENT_USER,
+        ),
+      ).rejects.toThrow(/registers individual players, not teams/);
+      expect(prisma.ongoingEvent.create).not.toHaveBeenCalled();
+    });
+
+    it('stores the flag on create and opens the solo path with it', async () => {
+      await service.create(
+        {
+          name: 'Cup',
+          date: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+          soloOnlyRegistration: true,
+        } as any,
+        CURRENT_USER,
+      );
+
+      const config = prisma.ongoingEvent.create.mock.calls[0][0].data.config.create;
+      expect(config.soloOnlyRegistration).toBe(true);
+      expect(config.allowSoloRegistration).toBe(true);
+    });
+  });
+
+  describe('hidden rules', () => {
+    it('stores the keys the organiser switched off', async () => {
+      await updateWith({ hiddenRules: ['roundRobin.step2', 'serving'] });
+
+      expect(written().hiddenRules).toEqual(['roundRobin.step2', 'serving']);
+    });
+
+    it('shows every rule again for an empty list', async () => {
+      prisma.ongoingEvent.findUnique = jest.fn(async () => eventRow({ hiddenRules: ['serving'] }));
+
+      await updateWith({ hiddenRules: [] });
+
+      expect(written().hiddenRules).toEqual([]);
+    });
+
+    // The config form sends the whole set; a request that omits it is from an older client, and
+    // must not silently un-hide what the organiser chose.
+    it('keeps what is stored when the field is absent', async () => {
+      prisma.ongoingEvent.findUnique = jest.fn(async () => eventRow({ hiddenRules: ['serving'] }));
+
+      await updateWith({});
+
+      expect(written().hiddenRules).toEqual(['serving']);
+    });
+
+    it('drops duplicates so one rule is hidden once', async () => {
+      await updateWith({ hiddenRules: ['serving', 'serving', 'tiebreak'] });
+
+      expect(written().hiddenRules).toEqual(['serving', 'tiebreak']);
+    });
+
+    it('rejects a key no rule maps to', async () => {
+      await expect(updateWith({ hiddenRules: ['serving', 'made.up'] })).rejects.toThrow('Unknown rule key: made.up');
+      expect(prisma.ongoingEventConfig.upsert).not.toHaveBeenCalled();
+    });
+
+    it('rejects a payload that is not an array of strings', async () => {
+      await expect(updateWith({ hiddenRules: 'serving' })).rejects.toThrow(
+        'hiddenRules must be an array of rule keys',
+      );
+      await expect(updateWith({ hiddenRules: [1, 2] })).rejects.toThrow('hiddenRules must be an array of rule keys');
+    });
+
+    // Hiding a step of one scheme then switching scheme must not wipe the choice: switching back
+    // restores it.
+    it('keeps keys belonging to another scheme', async () => {
+      prisma.ongoingEvent.findUnique = jest.fn(async () => eventRow({ hiddenRules: ['fullRotation.step4'] }));
+
+      await updateWith({ hiddenRules: ['fullRotation.step4', 'roundRobin.step1'] });
+
+      expect(written().hiddenRules).toEqual(['fullRotation.step4', 'roundRobin.step1']);
+    });
   });
 });

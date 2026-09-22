@@ -51,4 +51,9 @@ export class CreateOngoingEventDto {
   @IsOptional()
   @IsBoolean()
   allowSoloRegistration?: boolean;
+
+  /** Pairs cannot register at all; implies allowSoloRegistration, which the service forces on. */
+  @IsOptional()
+  @IsBoolean()
+  soloOnlyRegistration?: boolean;
 }

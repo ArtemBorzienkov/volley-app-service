@@ -39,6 +39,8 @@ import {
   OngoingRotationStateDto,
 } from './dto/ongoing-event-response.dto';
 import { buildGroupPairings, shuffle, packIntoRounds } from './schedule';
+import { CANCELLATION_WINDOW_MS, eventStartInstant } from './registration-window';
+import { isRuleKey } from './rules';
 import { effectiveTeamCount, pairByRating } from './pairing';
 import { dealIntoGroups, isPowerOfTwo } from './groups';
 import { buildSeedList, buildBracketGames, rankGroupTeams, Qualifier } from './bracket';
@@ -202,11 +204,24 @@ export class OngoingService {
     const visibility = this.normaliseVisibility(createOngoingEventDto.visibility);
     // fullRotation registers players, not pairs, so its entry path is the solo one — the flag is not
     // the organiser's to turn off there.
+    // fullRotation has no pair entry path at all, so it is solo-only by construction.
+    const soloOnlyRegistration =
+      scheme === 'fullRotation'
+        ? true
+        : this.normaliseBooleanFlag(createOngoingEventDto.soloOnlyRegistration, 'soloOnlyRegistration');
     const allowSoloRegistration =
-      scheme === 'fullRotation' ? true : this.normaliseAllowSolo(createOngoingEventDto.allowSoloRegistration);
+      scheme === 'fullRotation' || soloOnlyRegistration
+        ? true
+        : this.normaliseAllowSolo(createOngoingEventDto.allowSoloRegistration);
 
     if (scheme === 'fullRotation' && teams && teams.length) {
       throw new BadRequestException('A fullRotation tournament registers individual players, not teams');
+    }
+
+    if (soloOnlyRegistration && teams && teams.length) {
+      throw new BadRequestException(
+        'This tournament registers individual players, not teams — add them as solo players instead',
+      );
     }
 
     const soloPlayerIds = this.validateInitialSoloPlayers(
@@ -253,6 +268,7 @@ export class OngoingService {
           rotationRounds,
           visibility,
           allowSoloRegistration,
+          soloOnlyRegistration,
         },
       },
     };
@@ -309,8 +325,25 @@ export class OngoingService {
       rotationRounds: updateOngoingConfigDto.rotationRounds,
     });
     const visibility = this.normaliseVisibility(updateOngoingConfigDto.visibility);
+    const soloOnlyRegistration =
+      scheme === 'fullRotation'
+        ? true
+        : this.normaliseBooleanFlag(updateOngoingConfigDto.soloOnlyRegistration, 'soloOnlyRegistration');
     const allowSoloRegistration =
-      scheme === 'fullRotation' ? true : this.normaliseAllowSolo(updateOngoingConfigDto.allowSoloRegistration);
+      scheme === 'fullRotation' || soloOnlyRegistration
+        ? true
+        : this.normaliseAllowSolo(updateOngoingConfigDto.allowSoloRegistration);
+    const hiddenRules = this.normaliseHiddenRules(
+      updateOngoingConfigDto.hiddenRules,
+      event.config.hiddenRules ?? [],
+    );
+
+    // The pairs already registered would have no way back in once the pair entry path is closed.
+    if (soloOnlyRegistration && event.teams.length) {
+      throw new BadRequestException(
+        'This tournament has registered teams; clear the roster before switching it to solo-only registration',
+      );
+    }
 
     // Switching an event that already has pairs onto fullRotation would leave that roster unplayable.
     if (scheme === 'fullRotation' && event.teams.length) {
@@ -337,6 +370,8 @@ export class OngoingService {
         rotationRounds,
         visibility,
         allowSoloRegistration,
+        soloOnlyRegistration,
+        hiddenRules,
       },
       update: {
         gamesPerPair,
@@ -348,6 +383,8 @@ export class OngoingService {
         rotationRounds,
         visibility,
         allowSoloRegistration,
+        soloOnlyRegistration,
+        hiddenRules,
       },
     });
 
@@ -413,6 +450,14 @@ export class OngoingService {
     if (event.config.scheme === 'fullRotation') {
       throw new BadRequestException(
         'A fullRotation tournament registers individual players; register without a partner instead',
+      );
+    }
+
+    // Solo-only closes the pair entry path for everyone, the organiser included — they still build
+    // teams from the pool through form-teams and the roster editor.
+    if (event.config.soloOnlyRegistration) {
+      throw new BadRequestException(
+        'This tournament registers individual players; register without a partner instead',
       );
     }
 
@@ -514,6 +559,8 @@ export class OngoingService {
         visibility: event.config && event.config.visibility !== undefined ? event.config.visibility : 'public',
         allowSoloRegistration:
           event.config && event.config.allowSoloRegistration !== undefined ? event.config.allowSoloRegistration : false,
+        soloOnlyRegistration:
+          event.config && event.config.soloOnlyRegistration !== undefined ? event.config.soloOnlyRegistration : false,
         soloPlayers: event.soloPlayers.map((solo) => this.mapSoloPlayer(solo)),
         scheme: event.config && event.config.scheme !== undefined ? event.config.scheme : 'roundRobin',
         groupCount: event.config && event.config.groupCount !== undefined ? event.config.groupCount : 1,
@@ -528,17 +575,18 @@ export class OngoingService {
   async removeTeam(teamId: string, currentUser: JwtPayload): Promise<OngoingEventResponseDto> {
     const team = await this.prisma.ongoingTeam.findUnique({
       where: { id: teamId },
-      include: { event: { select: { createdByUserId: true, date: true } } },
+      include: { event: { select: { createdByUserId: true, date: true, startTime: true } } },
     });
 
     if (!team) {
       throw new NotFoundException(`Ongoing team with ID ${teamId} not found`);
     }
 
-    // Either member may withdraw the pair until the day before; the manager is not bound by that.
+    // Either member may withdraw the pair up to the deadline; the manager is not bound by it.
     await this.assertOwnEntryOrManager(
       team.event.createdByUserId,
       team.event.date,
+      team.event.startTime,
       [team.player1Id, team.player2Id],
       currentUser,
     );
@@ -616,14 +664,20 @@ export class OngoingService {
   async removeSoloPlayer(soloId: string, currentUser: JwtPayload): Promise<OngoingEventResponseDto> {
     const solo = await this.prisma.ongoingSoloPlayer.findUnique({
       where: { id: soloId },
-      include: { event: { select: { createdByUserId: true, date: true } } },
+      include: { event: { select: { createdByUserId: true, date: true, startTime: true } } },
     });
 
     if (!solo) {
       throw new NotFoundException(`Solo registration with ID ${soloId} not found`);
     }
 
-    await this.assertOwnEntryOrManager(solo.event.createdByUserId, solo.event.date, [solo.playerId], currentUser);
+    await this.assertOwnEntryOrManager(
+      solo.event.createdByUserId,
+      solo.event.date,
+      solo.event.startTime,
+      [solo.playerId],
+      currentUser,
+    );
     await this.assertPlanning(solo.eventId);
 
     await this.prisma.ongoingSoloPlayer.delete({ where: { id: soloId } });
@@ -707,17 +761,17 @@ export class OngoingService {
     return eventDay >= today;
   }
 
-  // Withdrawing yourself closes at the end of the day BEFORE the tournament — on the day itself the
-  // organiser is already building a schedule around you. Same UTC-day comparison as registration, so
-  // a date-only value is judged identically regardless of the server's local timezone.
-  private isCancellationOpen(date: Date): boolean {
-    const eventDate = new Date(date);
-    const now = new Date();
+  // Withdrawing yourself closes 24 hours before the first ball — inside a day the organiser is
+  // already building a schedule around you, and a replacement can no longer be found.
+  //
+  // startTime is a wall-clock "HH:MM" with no zone of its own, so it is read against the UTC midnight
+  // the date is stored as. That is the only reading both this and the browser can reach the same
+  // answer from; it is off by the venue's UTC offset, which is minutes-to-hours, not days.
+  private isCancellationOpen(date: Date, startTime: string | null): boolean {
+    const start = eventStartInstant(date, startTime);
+    if (start === null) return false;
 
-    const eventDay = Date.UTC(eventDate.getUTCFullYear(), eventDate.getUTCMonth(), eventDate.getUTCDate());
-    const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-
-    return today < eventDay;
+    return Date.now() < start - CANCELLATION_WINDOW_MS;
   }
 
   async generateSchedule(id: string, currentUser: JwtPayload): Promise<OngoingEventResponseDto> {
@@ -1348,6 +1402,34 @@ export class OngoingService {
     return resolved;
   }
 
+  /**
+   * Hidden rule keys are replaced wholesale, not merged — the config form always sends the complete
+   * set. Keys belonging to another scheme are kept: switching scheme and back must restore what the
+   * organiser chose before, and only the UI knows which scheme is on screen.
+   */
+  private normaliseHiddenRules(value: unknown, current: string[]): string[] {
+    if (value === undefined || value === null) return current;
+    if (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string')) {
+      throw new BadRequestException('hiddenRules must be an array of rule keys');
+    }
+
+    const unknownKey = value.find((entry) => !isRuleKey(entry));
+    if (unknownKey !== undefined) {
+      throw new BadRequestException(`Unknown rule key: ${unknownKey}`);
+    }
+
+    return [...new Set(value as string[])];
+  }
+
+  private normaliseBooleanFlag(value: boolean | undefined | null, field: string): boolean {
+    if (value === undefined || value === null) return false;
+    if (typeof value !== 'boolean') {
+      throw new BadRequestException(`${field} must be a boolean`);
+    }
+
+    return value;
+  }
+
   private normaliseAllowSolo(value: boolean | undefined | null): boolean {
     if (value === undefined || value === null) return false;
     if (typeof value !== 'boolean') {
@@ -1405,6 +1487,7 @@ export class OngoingService {
   private async assertOwnEntryOrManager(
     createdByUserId: string | null,
     eventDate: Date,
+    eventStartTime: string | null,
     entryPlayerIds: string[],
     currentUser: JwtPayload,
   ): Promise<void> {
@@ -1416,8 +1499,10 @@ export class OngoingService {
     if (!playerId || !entryPlayerIds.includes(playerId)) {
       throw new ForbiddenException('You can only cancel your own registration');
     }
-    if (!this.isCancellationOpen(eventDate)) {
-      throw new ForbiddenException('Registration can no longer be cancelled — the deadline was the day before');
+    if (!this.isCancellationOpen(eventDate, eventStartTime)) {
+      throw new ForbiddenException(
+        'Registration can no longer be cancelled — the deadline was 24 hours before the tournament',
+      );
     }
   }
 
@@ -1615,6 +1700,9 @@ export class OngoingService {
         visibility: event.config && event.config.visibility !== undefined ? event.config.visibility : 'public',
         allowSoloRegistration:
           event.config && event.config.allowSoloRegistration !== undefined ? event.config.allowSoloRegistration : false,
+        soloOnlyRegistration:
+          event.config && event.config.soloOnlyRegistration !== undefined ? event.config.soloOnlyRegistration : false,
+        hiddenRules: event.config && event.config.hiddenRules ? event.config.hiddenRules : [],
       },
       teams: (event.teams || []).map((team) => this.mapTeam(team)),
       soloPlayers: (event.soloPlayers || []).map((solo) => this.mapSoloPlayer(solo)),

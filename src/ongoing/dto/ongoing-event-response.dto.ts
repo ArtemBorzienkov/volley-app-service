@@ -65,6 +65,9 @@ export class OngoingEventConfigResponseDto {
   rotationRounds: number;
   visibility: string;
   allowSoloRegistration: boolean;
+  soloOnlyRegistration: boolean;
+  /** Rule keys the organiser switched off; everything not listed is shown on the Rules tab. */
+  hiddenRules: string[];
 }
 
 export class OngoingRotationStandingDto {
@@ -161,6 +164,8 @@ export class OngoingOpenEventDto {
   teams: OngoingTeamResponseDto[];
   visibility: string;
   allowSoloRegistration: boolean;
+  /** Pairs cannot register: the calendar's register control offers the solo path only. */
+  soloOnlyRegistration: boolean;
   soloPlayers: OngoingSoloPlayerDto[];
   // fullRotation caps its roster at groupCount x 4 players rather than by maxTeams, so the calendar
   // needs both to work out whether a tournament still has room.

@@ -142,8 +142,8 @@ Accounts and live tournaments were added later and live in their own models:
   creator, `finishedAt`, and the relations below.
 - **OngoingEventConfig** (`ongoing_event_config`) — one row per event: `courts`,
   `gamesPerPair`, `maxTeams`, `visibility` (`public` | `private`),
-  `allowSoloRegistration`, and the scheme fields `scheme`, `groupCount`,
-  `qualifiersPerGroup`, `rotationRounds`.
+  `allowSoloRegistration`, `soloOnlyRegistration`, `hiddenRules`, and the scheme
+  fields `scheme`, `groupCount`, `qualifiersPerGroup`, `rotationRounds`.
 - **OngoingTeam** (`ongoing_teams`) — a registered pair plus its `groupIndex`.
 - **OngoingSoloPlayer** (`ongoing_solo_players`) — a player registered without a
   partner. Unique per `(eventId, playerId)`; it is also the **roster** of a
@@ -315,7 +315,17 @@ Everything under `/ongoing` needs a session. Beyond that there are two levels:
   per-game — a rotation player changes partner every fixture, and a pair only ever plays two of
   their group's courts.
 
-A player can also always withdraw their own entry (`assertOwnEntryOrManager`), up to the day before.
+A player can also withdraw their own entry (`assertOwnEntryOrManager`) until **24 hours before the
+first ball** — `isCancellationOpen`, measured from `eventStartInstant(date, startTime)` in
+`registration-window.ts`. `date` is a calendar day stored as UTC midnight and `startTime` is a
+wall-clock `"HH:MM"`, so the two are combined **in UTC**: that is the only reading the browser can
+reproduce exactly, and it is off by the venue's UTC offset rather than by days. An event with no
+`startTime` is measured from its midnight. The organiser is not bound by the deadline — they are
+fixing a roster, not withdrawing.
+
+Note this is deliberately tighter than `isRegistrationDateOpen`, which stays open through the whole
+of the tournament's own day: entering late only adds a player, while withdrawing late leaves a hole
+in a schedule already built.
 
 ### After the tournament: handing over to `/events`
 
@@ -343,12 +353,33 @@ times.
 round-robin, then the top `qualifiersPerGroup` of each group seed a knockout
 bracket. `groupCount × qualifiersPerGroup` must be a power of two.
 
+**Solo-only registration** — `soloOnlyRegistration` closes the pair entry path on
+any scheme: `addTeam` is refused for everyone, the organiser included, and the
+solo pool becomes the only way in (so the flag forces `allowSoloRegistration` on
+too). The organiser still builds the teams, through `POST :id/solo/form-teams`
+and the roster editor (`PUT :id/teams`). `form-teams` is deliberately **additive
+and partial**: it takes whatever pairs it is given, requires only that each named
+player is in the pool, and leaves everyone else there — which is what lets the
+frontend pair some teams by hand now and the rest later. Turning it on is refused while pairs are
+registered, for the same reason switching to `fullRotation` is. `fullRotation`
+has it forced on — it has no pair entry path at all.
+
+**Rule toggles** — `hiddenRules` holds the rule keys the organiser switched off;
+everything *not* listed is shown on the frontend's Rules tab. Exclusions rather
+than inclusions, so a rule added in a later release appears on tournaments
+configured before it existed. The keys are validated against `rules.ts`, whose
+catalogue the frontend mirrors in `lib/ongoing-rules.ts`; the wording itself
+lives only in the frontend's four locale files. Keys belonging to another scheme
+are kept rather than filtered out, so switching scheme and back restores what was
+chosen before.
+
 **`fullRotation`** — an individual format: players enter alone and change partner
 every game.
 
-- **Entry unit is the player.** `allowSoloRegistration` is forced on, and
-  `addTeam`/`setTeams` are refused. The roster is `OngoingSoloPlayer`, capped at
-  `groupCount × 4` — `maxTeams` counts pairs and does not apply.
+- **Entry unit is the player.** `allowSoloRegistration` and
+  `soloOnlyRegistration` are forced on, and `addTeam`/`setTeams` are refused. The
+  roster is `OngoingSoloPlayer`, capped at `groupCount × 4` — `maxTeams` counts
+  pairs and does not apply.
 - **Groups of exactly four.** `groupCount` must be `2` or `3` (8 or 12 players),
   and the roster has to fill every group exactly: a group of three or five has no
   three-fixture rotation, so a partial field cannot be scheduled at all.

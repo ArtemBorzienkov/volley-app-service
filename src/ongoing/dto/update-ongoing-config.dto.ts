@@ -1,4 +1,4 @@
-import { IsBoolean, IsInt, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsBoolean, IsInt, IsOptional, IsString } from 'class-validator';
 
 export class UpdateOngoingConfigDto {
   @IsInt()
@@ -34,4 +34,18 @@ export class UpdateOngoingConfigDto {
   @IsOptional()
   @IsBoolean()
   allowSoloRegistration?: boolean;
+
+  /** Pairs cannot register at all; implies allowSoloRegistration, which the service forces on. */
+  @IsOptional()
+  @IsBoolean()
+  soloOnlyRegistration?: boolean;
+
+  /**
+   * Rule keys to leave off this tournament's Rules tab. The complete set every time — omitting the
+   * field keeps what is stored, sending [] shows every rule again.
+   */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  hiddenRules?: string[];
 }
