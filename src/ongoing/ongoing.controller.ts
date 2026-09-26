@@ -140,6 +140,13 @@ export class OngoingController {
     return this.ongoingService.previewSoloPairing(id, req.user);
   }
 
+  @Post(':id/solo/disband-teams')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  async disbandTeams(@Param('id') id: string, @Req() req: AuthedRequest): Promise<OngoingEventResponseDto> {
+    return this.ongoingService.disbandTeams(id, req.user);
+  }
+
   @Post(':id/solo/form-teams')
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard)

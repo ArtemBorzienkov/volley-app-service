@@ -360,7 +360,14 @@ too). The organiser still builds the teams, through `POST :id/solo/form-teams`
 and the roster editor (`PUT :id/teams`). `form-teams` is deliberately **additive
 and partial**: it takes whatever pairs it is given, requires only that each named
 player is in the pool, and leaves everyone else there — which is what lets the
-frontend pair some teams by hand now and the rest later. Turning it on is refused while pairs are
+frontend pair some teams by hand now and the rest later.
+
+`POST :id/solo/disband-teams` is its reverse: every pair goes back to the pool in
+one transaction, with the unplayed schedule deleted first because its fixtures
+reference the teams. Each player keeps the pair's `createdAt` as their
+registration time rather than "now". Manage-only, refused once a result is
+recorded (`assertPlanning`), refused for `fullRotation` (no teams), and refused
+when `allowSoloRegistration` is off — there would be no pool to return them to. Turning it on is refused while pairs are
 registered, for the same reason switching to `fullRotation` is. `fullRotation`
 has it forced on — it has no pair entry path at all.
 

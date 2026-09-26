@@ -708,6 +708,50 @@ export class OngoingService {
     };
   }
 
+  /**
+   * The reverse of formTeamsFromSolo: every pair goes back to the solo pool, ready to be paired again.
+   * Each player keeps the pair's registration time rather than getting "now", so the roster still
+   * shows when they actually entered.
+   *
+   * The unplayed schedule goes with the teams — its fixtures reference them — and the planning guard
+   * keeps a recorded result from ever being part of that.
+   */
+  async disbandTeams(id: string, currentUser: JwtPayload): Promise<OngoingEventResponseDto> {
+    const event = await this.loadEvent(id);
+    this.assertCanManage(event.createdByUserId, currentUser);
+
+    if (event.config.scheme === 'fullRotation') {
+      throw new BadRequestException('A fullRotation tournament has no teams to disband');
+    }
+    // Otherwise the players land in a pool that nobody can register into or be paired from.
+    if (!event.config.allowSoloRegistration) {
+      throw new BadRequestException(
+        'Turn on registration without a partner first — disbanded players wait in the solo pool',
+      );
+    }
+
+    await this.assertPlanning(id);
+
+    if (!event.teams.length) return event;
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.ongoingGame.deleteMany({ where: { eventId: id } });
+      // Pool rows first, mirroring formTeamsFromSolo: a failure can never leave a player in neither place.
+      await tx.ongoingSoloPlayer.createMany({
+        data: event.teams.flatMap((team) =>
+          [team.player1.id, team.player2.id].map((playerId) => ({
+            eventId: id,
+            playerId,
+            createdAt: team.registeredAt,
+          })),
+        ),
+      });
+      await tx.ongoingTeam.deleteMany({ where: { eventId: id } });
+    });
+
+    return this.loadEvent(id);
+  }
+
   async formTeamsFromSolo(
     id: string,
     formTeamsFromSoloDto: FormTeamsFromSoloDto,

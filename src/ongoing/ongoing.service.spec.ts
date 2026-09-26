@@ -5020,3 +5020,172 @@ describe('OngoingService solo-only registration and rule toggles', () => {
     });
   });
 });
+
+describe('OngoingService disbandTeams', () => {
+  let service: OngoingService;
+  let prisma: any;
+  let calls: string[];
+
+  const CURRENT_USER = { sub: 'user-1', email: 'user1@example.com', role: 'admin', jti: 'jti-1', iat: 0, exp: 0 };
+  const PLAYER_USER = { sub: 'user-9', email: 'p9@example.com', role: 'player', jti: 'jti-9', iat: 0, exp: 0 };
+
+  const ANN_BOB_AT = new Date('2026-09-10T09:00:00.000Z');
+  const CID_DEE_AT = new Date('2026-09-11T18:30:00.000Z');
+
+  const teamRow = (id: string, a: string, b: string, createdAt: Date) => ({
+    id,
+    player1: { id: a, name: a, playerStats: { rank: 1000 } },
+    player2: { id: b, name: b, playerStats: { rank: 1000 } },
+    groupIndex: null,
+    createdAt,
+  });
+
+  const eventRow = (config: Record<string, unknown> = {}, overrides: Record<string, unknown> = {}) => ({
+    id: 'event-1',
+    name: 'Cup',
+    date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    startTime: null,
+    createdAt: new Date('2026-09-01T00:00:00.000Z'),
+    updatedAt: new Date('2026-09-01T00:00:00.000Z'),
+    createdByUserId: 'user-1',
+    finishedAt: null,
+    config: {
+      gamesPerPair: 1,
+      courts: 1,
+      maxTeams: null,
+      scheme: 'roundRobin',
+      groupCount: 1,
+      qualifiersPerGroup: null,
+      rotationRounds: 3,
+      visibility: 'public',
+      allowSoloRegistration: true,
+      soloOnlyRegistration: true,
+      hiddenRules: [],
+      ...config,
+    },
+    teams: [teamRow('t1', 'ann', 'bob', ANN_BOB_AT), teamRow('t2', 'cid', 'dee', CID_DEE_AT)],
+    soloPlayers: [],
+    games: [],
+    rotationSlots: [],
+    ...overrides,
+  });
+
+  beforeEach(async () => {
+    calls = [];
+    prisma = {
+      ongoingEvent: { findUnique: jest.fn(async () => eventRow()) },
+      ongoingGame: {
+        count: jest.fn(async () => 0),
+        deleteMany: jest.fn(async () => {
+          calls.push('deleteGames');
+          return { count: 3 };
+        }),
+      },
+      ongoingSoloPlayer: {
+        createMany: jest.fn(async () => {
+          calls.push('createSolo');
+          return { count: 4 };
+        }),
+      },
+      ongoingTeam: {
+        deleteMany: jest.fn(async () => {
+          calls.push('deleteTeams');
+          return { count: 2 };
+        }),
+      },
+      $transaction: jest.fn(),
+    };
+    prisma.$transaction = jest.fn(async (cb: any) => cb(prisma));
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        OngoingService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: UserService, useValue: { findById: jest.fn(async () => ({ playerId: 'ann' } as any)) } },
+      ],
+    }).compile();
+
+    service = module.get<OngoingService>(OngoingService);
+  });
+
+  it('puts every paired player back in the pool and drops the teams, in one transaction', async () => {
+    await service.disbandTeams('event-1', CURRENT_USER);
+
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.ongoingSoloPlayer.createMany).toHaveBeenCalledWith({
+      data: [
+        { eventId: 'event-1', playerId: 'ann', createdAt: ANN_BOB_AT },
+        { eventId: 'event-1', playerId: 'bob', createdAt: ANN_BOB_AT },
+        { eventId: 'event-1', playerId: 'cid', createdAt: CID_DEE_AT },
+        { eventId: 'event-1', playerId: 'dee', createdAt: CID_DEE_AT },
+      ],
+    });
+    expect(prisma.ongoingTeam.deleteMany).toHaveBeenCalledWith({ where: { eventId: 'event-1' } });
+  });
+
+  // The fixtures reference the teams, and the pool rows must exist before the teams they replace go.
+  it('clears the schedule first and writes the pool before deleting the teams', async () => {
+    await service.disbandTeams('event-1', CURRENT_USER);
+
+    expect(prisma.ongoingGame.deleteMany).toHaveBeenCalledWith({ where: { eventId: 'event-1' } });
+    expect(calls).toEqual(['deleteGames', 'createSolo', 'deleteTeams']);
+  });
+
+  // Registration time is shown on the roster; "now" would claim everyone just entered.
+  it('keeps each player on the pair’s registration time', async () => {
+    await service.disbandTeams('event-1', CURRENT_USER);
+
+    const rows = prisma.ongoingSoloPlayer.createMany.mock.calls[0][0].data;
+    expect(rows.map((row: any) => row.createdAt)).toEqual([ANN_BOB_AT, ANN_BOB_AT, CID_DEE_AT, CID_DEE_AT]);
+  });
+
+  it('works for a tournament that merely allows solo entry, not only a solo-only one', async () => {
+    prisma.ongoingEvent.findUnique = jest.fn(async () => eventRow({ soloOnlyRegistration: false }));
+
+    await service.disbandTeams('event-1', CURRENT_USER);
+
+    expect(prisma.ongoingSoloPlayer.createMany).toHaveBeenCalled();
+  });
+
+  it('refuses anyone but the organiser or an admin', async () => {
+    await expect(service.disbandTeams('event-1', PLAYER_USER)).rejects.toThrow(ForbiddenException);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('refuses once a result is recorded — the roster is locked', async () => {
+    prisma.ongoingGame.count = jest.fn(async () => 1);
+
+    await expect(service.disbandTeams('event-1', CURRENT_USER)).rejects.toThrow(
+      'The tournament has already started; its roster is locked',
+    );
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('refuses when there is no pool to return the players to', async () => {
+    prisma.ongoingEvent.findUnique = jest.fn(async () =>
+      eventRow({ allowSoloRegistration: false, soloOnlyRegistration: false }),
+    );
+
+    await expect(service.disbandTeams('event-1', CURRENT_USER)).rejects.toThrow(
+      /Turn on registration without a partner first/,
+    );
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('refuses a fullRotation tournament, which has no teams', async () => {
+    prisma.ongoingEvent.findUnique = jest.fn(async () => eventRow({ scheme: 'fullRotation', groupCount: 2 }, { teams: [] }));
+
+    await expect(service.disbandTeams('event-1', CURRENT_USER)).rejects.toThrow(
+      'A fullRotation tournament has no teams to disband',
+    );
+  });
+
+  it('is a no-op when there are no teams', async () => {
+    prisma.ongoingEvent.findUnique = jest.fn(async () => eventRow({}, { teams: [] }));
+
+    const result = await service.disbandTeams('event-1', CURRENT_USER);
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(result.teams).toEqual([]);
+  });
+});
