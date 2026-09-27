@@ -37,12 +37,7 @@ const game = (
   });
 
 /** Splits a result into the winning side's change and the losing side's, whichever team won. */
-const sides = (
-  team1: [number, number],
-  team2: [number, number],
-  team1Won: boolean,
-  totalGames = 10,
-) => {
+const sides = (team1: [number, number], team2: [number, number], team1Won: boolean, totalGames = 10) => {
   const result = game(team1, team2, team1Won ? 21 : 15, team1Won ? 15 : 21, totalGames)!;
   return team1Won
     ? { winner: result.team1Player1Change, loser: result.team2Player1Change }

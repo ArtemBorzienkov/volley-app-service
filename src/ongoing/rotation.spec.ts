@@ -18,7 +18,9 @@ describe('rotationFixtures', () => {
   });
 
   it('partners every player with every other exactly once', () => {
-    const partnerships = fixtures.flatMap((fixture) => [fixture.side1, fixture.side2]).map((side) => side.slice().sort().join('+'));
+    const partnerships = fixtures
+      .flatMap((fixture) => [fixture.side1, fixture.side2])
+      .map((side) => side.slice().sort().join('+'));
 
     expect(partnerships.sort()).toEqual(['p1+p2', 'p1+p3', 'p1+p4', 'p2+p3', 'p2+p4', 'p3+p4']);
   });
@@ -144,10 +146,7 @@ describe('rankGroupPlayers', () => {
   it('puts the lower-rated player above on an equal difference, and only then', () => {
     // p1+p2 beat p3+p4 by 10; the return game reverses it, so all four sit on one win and zero
     // difference. p4 is rated below p1, so p4 finishes above.
-    const games = [
-      game(['p1', 'p3'], ['p2', 'p4'], 21, 11),
-      game(['p2', 'p4'], ['p1', 'p3'], 21, 11),
-    ];
+    const games = [game(['p1', 'p3'], ['p2', 'p4'], 21, 11), game(['p2', 'p4'], ['p1', 'p3'], 21, 11)];
 
     const ranked = rankGroupPlayers(roster(['p1', 'p2', 'p3', 'p4'], [1500, 1000, 1400, 900]), games);
 
@@ -176,10 +175,7 @@ describe('rankGroupPlayers', () => {
 
   it('treats a level score as a win for the second side, as the team table already does', () => {
     // Not reachable in a real beach volleyball game, but the ordering must still be defined.
-    const ranked = rankGroupPlayers(
-      roster(['p1', 'p2', 'p3', 'p4']),
-      [game(['p1', 'p3'], ['p2', 'p4'], 15, 15)],
-    );
+    const ranked = rankGroupPlayers(roster(['p1', 'p2', 'p3', 'p4']), [game(['p1', 'p3'], ['p2', 'p4'], 15, 15)]);
 
     expect(ranked.slice(0, 2).map((row) => row.playerId)).toEqual(['p2', 'p4']);
     expect(ranked.slice(0, 2).every((row) => row.wins === 1)).toBe(true);
@@ -195,14 +191,16 @@ describe('rankGroupPlayers', () => {
     const ranked = rankGroupPlayers(roster(['p1', 'p2', 'p3', 'p4']), games);
 
     expect(ranked.map((row) => row.played)).toEqual([1, 1, 1, 1]);
-    expect(ranked.slice(0, 2).map((row) => row.playerId).sort()).toEqual(['p1', 'p2']);
+    expect(
+      ranked
+        .slice(0, 2)
+        .map((row) => row.playerId)
+        .sort(),
+    ).toEqual(['p1', 'p2']);
   });
 
   it('ignores games belonging to another group', () => {
-    const games = [
-      game(['p1', 'p2'], ['p3', 'p4'], 21, 15),
-      game(['q1', 'q2'], ['q3', 'q4'], 21, 0),
-    ];
+    const games = [game(['p1', 'p2'], ['p3', 'p4'], 21, 15), game(['q1', 'q2'], ['q3', 'q4'], 21, 0)];
 
     const ranked = rankGroupPlayers(roster(['p1', 'p2', 'p3', 'p4']), games);
 

@@ -333,10 +333,7 @@ export class OngoingService {
       scheme === 'fullRotation' || soloOnlyRegistration
         ? true
         : this.normaliseAllowSolo(updateOngoingConfigDto.allowSoloRegistration);
-    const hiddenRules = this.normaliseHiddenRules(
-      updateOngoingConfigDto.hiddenRules,
-      event.config.hiddenRules ?? [],
-    );
+    const hiddenRules = this.normaliseHiddenRules(updateOngoingConfigDto.hiddenRules, event.config.hiddenRules ?? []);
 
     // The pairs already registered would have no way back in once the pair entry path is closed.
     if (soloOnlyRegistration && event.teams.length) {
@@ -456,9 +453,7 @@ export class OngoingService {
     // Solo-only closes the pair entry path for everyone, the organiser included — they still build
     // teams from the pool through form-teams and the roster editor.
     if (event.config.soloOnlyRegistration) {
-      throw new BadRequestException(
-        'This tournament registers individual players; register without a partner instead',
-      );
+      throw new BadRequestException('This tournament registers individual players; register without a partner instead');
     }
 
     const { player1Id, player2Id } = addOngoingTeamDto;
@@ -549,12 +544,12 @@ export class OngoingService {
         // tournament, so this mirrors OngoingEventListItemDto rather than being derived client-side.
         createdByUserId: event.createdByUserId ?? null,
         createdBy: event.createdByUser
-        ? {
-            id: event.createdByUser.id,
-            name: resolveDisplayName(event.createdByUser),
-            isAnonymous: event.createdByUser.isAnonymous ?? false,
-          }
-        : null,
+          ? {
+              id: event.createdByUser.id,
+              name: resolveDisplayName(event.createdByUser),
+              isAnonymous: event.createdByUser.isAnonymous ?? false,
+            }
+          : null,
         teams: event.teams.map((team) => this.mapTeam(team)),
         visibility: event.config && event.config.visibility !== undefined ? event.config.visibility : 'public',
         allowSoloRegistration:
@@ -1584,7 +1579,7 @@ export class OngoingService {
     ]);
 
     if (!playerId || !entrants.has(playerId)) {
-      throw new ForbiddenException('Only this tournament\'s entrants and its organiser can record results');
+      throw new ForbiddenException("Only this tournament's entrants and its organiser can record results");
     }
   }
 
@@ -1822,9 +1817,7 @@ export class OngoingService {
 
     const rounds: OngoingRotationRoundDto[] = [];
     for (let round = 1; round <= currentRound; round += 1) {
-      const roundGames = (event.games || []).filter(
-        (game: any) => game.phase === 'rotation' && game.round === round,
-      );
+      const roundGames = (event.games || []).filter((game: any) => game.phase === 'rotation' && game.round === round);
       rounds.push({
         round,
         isComplete: roundGames.length > 0 && roundGames.every((game: any) => isGamePlayed(game)),

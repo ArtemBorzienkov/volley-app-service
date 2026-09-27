@@ -3624,9 +3624,18 @@ describe('OngoingService fullRotation', () => {
   const gamesFor = (round: number, groupIndex: number, group: string[], scores: Array<[number, number] | null>) => {
     const [a, b, c, d] = group;
     const sides: Array<[string[], string[]]> = [
-      [[a, b], [c, d]],
-      [[a, c], [b, d]],
-      [[a, d], [b, c]],
+      [
+        [a, b],
+        [c, d],
+      ],
+      [
+        [a, c],
+        [b, d],
+      ],
+      [
+        [a, d],
+        [b, c],
+      ],
     ];
     return sides.map(([side1, side2], index) => ({
       id: `g-${round}-${groupIndex}-${index}`,
@@ -3714,9 +3723,9 @@ describe('OngoingService fullRotation', () => {
 
   describe('registration', () => {
     it('refuses a team: the scheme registers individual players', async () => {
-      await expect(
-        service.addTeam('event-1', { player1Id: 'p1', player2Id: 'p2' }, CURRENT_USER),
-      ).rejects.toThrow(BadRequestException);
+      await expect(service.addTeam('event-1', { player1Id: 'p1', player2Id: 'p2' }, CURRENT_USER)).rejects.toThrow(
+        BadRequestException,
+      );
       expect(prisma.ongoingTeam.create).not.toHaveBeenCalled();
     });
 
@@ -3874,9 +3883,7 @@ describe('OngoingService fullRotation', () => {
       event.config.rotationRounds = 1;
       load(event);
 
-      await expect(service.advanceRotationRound('event-1', CURRENT_USER)).rejects.toThrow(
-        /Round 1 is the last one/,
-      );
+      await expect(service.advanceRotationRound('event-1', CURRENT_USER)).rejects.toThrow(/Round 1 is the last one/);
     });
 
     it('refuses on a scheme that has no rounds', async () => {
@@ -3909,16 +3916,26 @@ describe('OngoingService fullRotation', () => {
             ['p5', 'p6', 'p7', 'p8'],
           ]),
           games: [
-            ...gamesFor(1, 0, ['p1', 'p2', 'p3', 'p4'], [
-              [21, 15],
-              [21, 15],
-              [21, 15],
-            ]),
-            ...gamesFor(1, 1, ['p5', 'p6', 'p7', 'p8'], [
-              [21, 15],
-              [21, 15],
-              [21, 15],
-            ]),
+            ...gamesFor(
+              1,
+              0,
+              ['p1', 'p2', 'p3', 'p4'],
+              [
+                [21, 15],
+                [21, 15],
+                [21, 15],
+              ],
+            ),
+            ...gamesFor(
+              1,
+              1,
+              ['p5', 'p6', 'p7', 'p8'],
+              [
+                [21, 15],
+                [21, 15],
+                [21, 15],
+              ],
+            ),
           ],
         }),
       );
@@ -3940,16 +3957,26 @@ describe('OngoingService fullRotation', () => {
           ['p5', 'p6', 'p7', 'p8'],
         ]),
         games: [
-          ...gamesFor(1, 0, ['p1', 'p2', 'p3', 'p4'], [
-            [21, 15],
-            [21, 15],
-            [21, 15],
-          ]),
-          ...gamesFor(1, 1, ['p5', 'p6', 'p7', 'p8'], [
-            [21, 15],
-            [21, 15],
-            [21, 15],
-          ]),
+          ...gamesFor(
+            1,
+            0,
+            ['p1', 'p2', 'p3', 'p4'],
+            [
+              [21, 15],
+              [21, 15],
+              [21, 15],
+            ],
+          ),
+          ...gamesFor(
+            1,
+            1,
+            ['p5', 'p6', 'p7', 'p8'],
+            [
+              [21, 15],
+              [21, 15],
+              [21, 15],
+            ],
+          ),
         ],
       });
       event.config.rotationRounds = 1;
@@ -3961,12 +3988,7 @@ describe('OngoingService fullRotation', () => {
       expect(result.rotation!.finalStandings).toHaveLength(8);
       // The winner of group 0 wins the tournament; group 1 fills the places below group 0 entirely.
       expect(result.rotation!.finalStandings[0].player.id).toBe('p1');
-      expect(result.rotation!.finalStandings.slice(0, 4).map((row) => row.player.id)).toEqual([
-        'p1',
-        'p2',
-        'p3',
-        'p4',
-      ]);
+      expect(result.rotation!.finalStandings.slice(0, 4).map((row) => row.player.id)).toEqual(['p1', 'p2', 'p3', 'p4']);
       expect(result.rotation!.finalStandings[4].place).toBe(5);
     });
   });
@@ -4031,7 +4053,11 @@ describe('OngoingService fullRotation config', () => {
   });
 
   const updateWith = (extra: Record<string, unknown>) =>
-    service.updateConfig('event-1', { gamesPerPair: 1, courts: 1, scheme: 'fullRotation', ...extra } as any, CURRENT_USER);
+    service.updateConfig(
+      'event-1',
+      { gamesPerPair: 1, courts: 1, scheme: 'fullRotation', ...extra } as any,
+      CURRENT_USER,
+    );
 
   it('accepts two or three groups', async () => {
     await updateWith({ groupCount: 2 });
@@ -4118,7 +4144,13 @@ describe('OngoingService fullRotation config', () => {
 
   it('creates with solo registration on and no maxTeams-driven roster', async () => {
     await service.create(
-      { name: 'Cup', date: '2026-09-20T00:00:00.000Z', scheme: 'fullRotation', groupCount: 3, rotationRounds: 4 } as any,
+      {
+        name: 'Cup',
+        date: '2026-09-20T00:00:00.000Z',
+        scheme: 'fullRotation',
+        groupCount: 3,
+        rotationRounds: 4,
+      } as any,
       CURRENT_USER,
     );
 
@@ -4208,9 +4240,9 @@ describe('OngoingService.updateGameScore on a rotation game', () => {
       bracketSlot: 0,
     }));
 
-    await expect(
-      service.updateGameScore('game-1', { team1Points: 21, team2Points: 15 }, CURRENT_USER),
-    ).rejects.toThrow(new BadRequestException('Both teams must be known before a result can be recorded'));
+    await expect(service.updateGameScore('game-1', { team1Points: 21, team2Points: 15 }, CURRENT_USER)).rejects.toThrow(
+      new BadRequestException('Both teams must be known before a result can be recorded'),
+    );
   });
 });
 
@@ -4233,7 +4265,7 @@ describe('OngoingService player anonymity', () => {
           id: 'event-1',
           name: 'Cup',
           // Relative to now: a fixed date silently expires into "registration closed" once it passes.
-    date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+          date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
           createdAt: new Date(),
           updatedAt: new Date(),
           createdByUserId: 'u1',
@@ -4293,7 +4325,7 @@ describe('OngoingService player anonymity', () => {
       id: 'event-1',
       name: 'Cup',
       // Relative to now: a fixed date silently expires into "registration closed" once it passes.
-    date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
       createdAt: new Date(),
       updatedAt: new Date(),
       createdByUserId: 'u1',
@@ -4387,17 +4419,13 @@ describe('OngoingService — who may record a result', () => {
   });
 
   it('lets a player waiting in the solo pool record', async () => {
-    prisma.ongoingEvent.findUnique = jest.fn(async () =>
-      eventRow({ soloPlayers: [{ playerId: 'p-outsider' }] }),
-    );
+    prisma.ongoingEvent.findUnique = jest.fn(async () => eventRow({ soloPlayers: [{ playerId: 'p-outsider' }] }));
 
     await expect(record(OUTSIDER)).resolves.toBeDefined();
   });
 
   it('lets a player in a rotation group record', async () => {
-    prisma.ongoingEvent.findUnique = jest.fn(async () =>
-      eventRow({ rotationSlots: [{ playerId: 'p-outsider' }] }),
-    );
+    prisma.ongoingEvent.findUnique = jest.fn(async () => eventRow({ rotationSlots: [{ playerId: 'p-outsider' }] }));
 
     await expect(record(OUTSIDER)).resolves.toBeDefined();
   });
@@ -4434,9 +4462,7 @@ describe('OngoingService — who may record a result', () => {
   });
 
   it('applies the same rule to clearing a result', async () => {
-    prisma.ongoingEvent.findUnique = jest.fn(async () =>
-      eventRow({ soloPlayers: [{ playerId: 'p-outsider' }] }),
-    );
+    prisma.ongoingEvent.findUnique = jest.fn(async () => eventRow({ soloPlayers: [{ playerId: 'p-outsider' }] }));
 
     await expect(service.clearGameResult('game-1', OUTSIDER)).resolves.toBeDefined();
 
@@ -4594,7 +4620,10 @@ describe('OngoingService.create — groupsPlayoff without a bracket shape', () =
   });
 
   const create = (extra: Record<string, unknown> = {}) =>
-    service.create({ name: 'Cup', date: '2030-01-01T00:00:00.000Z', scheme: 'groupsPlayoff', ...extra } as any, CURRENT_USER);
+    service.create(
+      { name: 'Cup', date: '2030-01-01T00:00:00.000Z', scheme: 'groupsPlayoff', ...extra } as any,
+      CURRENT_USER,
+    );
 
   const writtenConfig = () => prisma.ongoingEvent.create.mock.calls[0][0].data.config.create;
 
@@ -4619,9 +4648,7 @@ describe('OngoingService.create — groupsPlayoff without a bracket shape', () =
   });
 
   it('still rejects a bracket that is not a power of two', async () => {
-    await expect(create({ groupCount: 3, qualifiersPerGroup: 1 })).rejects.toThrow(
-      /power of two/,
-    );
+    await expect(create({ groupCount: 3, qualifiersPerGroup: 1 })).rejects.toThrow(/power of two/);
   });
 
   it('defaults to a power-of-two bracket, so the default can never be rejected later', async () => {
@@ -4684,7 +4711,9 @@ describe('OngoingService.create — an initial pool of partnerless players', () 
   it('checks the players exist', async () => {
     await create({ allowSoloRegistration: true, soloPlayers: ['p1', 'p2'] });
 
-    expect(prisma.player.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: { in: ['p1', 'p2'] } } }));
+    expect(prisma.player.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: ['p1', 'p2'] } } }),
+    );
   });
 
   it('refuses a pool on a tournament that does not accept partnerless entrants', async () => {
@@ -4730,7 +4759,12 @@ describe('OngoingService.create — an initial pool of partnerless players', () 
   it('counts the pool against maxTeams the way registration does', async () => {
     // Two partnerless entrants will become one team, so 1 team + 2 solo = 2 against a cap of 2.
     await expect(
-      create({ allowSoloRegistration: true, maxTeams: 2, teams: [{ player1Id: 'p1', player2Id: 'p2' }], soloPlayers: ['p3', 'p4'] }),
+      create({
+        allowSoloRegistration: true,
+        maxTeams: 2,
+        teams: [{ player1Id: 'p1', player2Id: 'p2' }],
+        soloPlayers: ['p3', 'p4'],
+      }),
     ).resolves.toBeDefined();
 
     // 1 team + 4 partnerless = 1 + ceil(4/2) = 3, over a cap of 2. (A cap of 1 is rejected earlier:
@@ -4760,7 +4794,7 @@ describe('OngoingService — when each entry was made', () => {
           id: 'event-1',
           name: 'Cup',
           // Relative to now: a fixed date silently expires into "registration closed" once it passes.
-    date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+          date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
           createdAt: new Date(),
           updatedAt: new Date(),
           createdByUserId: 'u1',
@@ -4775,7 +4809,11 @@ describe('OngoingService — when each entry was made', () => {
             },
           ],
           soloPlayers: [
-            { id: 's1', createdAt: SOLO_AT, player: { id: 'p3', name: 'Cid', avatar: null, playerStats: { rank: 900 } } },
+            {
+              id: 's1',
+              createdAt: SOLO_AT,
+              player: { id: 'p3', name: 'Cid', avatar: null, playerStats: { rank: 900 } },
+            },
           ],
           games: [],
           rotationSlots: [],
@@ -4880,7 +4918,11 @@ describe('OngoingService solo-only registration and rule toggles', () => {
   });
 
   const updateWith = (extra: Record<string, unknown>) =>
-    service.updateConfig('event-1', { gamesPerPair: 1, courts: 1, scheme: 'roundRobin', ...extra } as any, CURRENT_USER);
+    service.updateConfig(
+      'event-1',
+      { gamesPerPair: 1, courts: 1, scheme: 'roundRobin', ...extra } as any,
+      CURRENT_USER,
+    );
 
   const written = () => prisma.ongoingEventConfig.upsert.mock.calls[0][0].update;
 
@@ -4928,9 +4970,9 @@ describe('OngoingService solo-only registration and rule toggles', () => {
       );
 
       for (const user of [PLAYER_USER, CURRENT_USER]) {
-        await expect(
-          service.addTeam('event-1', { player1Id: 'p1', player2Id: 'p2' }, user),
-        ).rejects.toThrow('This tournament registers individual players; register without a partner instead');
+        await expect(service.addTeam('event-1', { player1Id: 'p1', player2Id: 'p2' }, user)).rejects.toThrow(
+          'This tournament registers individual players; register without a partner instead',
+        );
       }
       expect(prisma.ongoingTeam.create).not.toHaveBeenCalled();
     });
@@ -5003,9 +5045,7 @@ describe('OngoingService solo-only registration and rule toggles', () => {
     });
 
     it('rejects a payload that is not an array of strings', async () => {
-      await expect(updateWith({ hiddenRules: 'serving' })).rejects.toThrow(
-        'hiddenRules must be an array of rule keys',
-      );
+      await expect(updateWith({ hiddenRules: 'serving' })).rejects.toThrow('hiddenRules must be an array of rule keys');
       await expect(updateWith({ hiddenRules: [1, 2] })).rejects.toThrow('hiddenRules must be an array of rule keys');
     });
 
@@ -5173,7 +5213,9 @@ describe('OngoingService disbandTeams', () => {
   });
 
   it('refuses a fullRotation tournament, which has no teams', async () => {
-    prisma.ongoingEvent.findUnique = jest.fn(async () => eventRow({ scheme: 'fullRotation', groupCount: 2 }, { teams: [] }));
+    prisma.ongoingEvent.findUnique = jest.fn(async () =>
+      eventRow({ scheme: 'fullRotation', groupCount: 2 }, { teams: [] }),
+    );
 
     await expect(service.disbandTeams('event-1', CURRENT_USER)).rejects.toThrow(
       'A fullRotation tournament has no teams to disband',

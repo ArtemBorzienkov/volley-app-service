@@ -29,7 +29,9 @@ describe('RankingsService.updatePlayersRankByGameResult', () => {
 
   /** The rankChange written for each player, keyed by playerId. */
   const written = () =>
-    Object.fromEntries(tx.gamePlayerRank.create.mock.calls.map((call) => [call[0].data.playerId, call[0].data.rankChange]));
+    Object.fromEntries(
+      tx.gamePlayerRank.create.mock.calls.map((call) => [call[0].data.playerId, call[0].data.rankChange]),
+    );
 
   beforeEach(async () => {
     tx = {

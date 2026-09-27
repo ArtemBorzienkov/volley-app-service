@@ -1,13 +1,4 @@
-import {
-  IsBoolean,
-  IsEmail,
-  IsOptional,
-  IsString,
-  IsUUID,
-  Matches,
-  MinLength,
-  ValidateNested,
-} from 'class-validator';
+import { IsBoolean, IsEmail, IsOptional, IsString, IsUUID, Matches, MinLength, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { NewPlayerDto } from './new-player.dto';
 

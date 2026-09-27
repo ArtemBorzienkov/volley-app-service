@@ -13,12 +13,7 @@ export const GENERAL_RULE_KEYS = ['serving', 'tiebreak'] as const;
 /** Per-scheme steps, in the order the day actually runs. */
 export const SCHEME_RULE_KEYS: Record<string, readonly string[]> = {
   roundRobin: ['roundRobin.step1', 'roundRobin.step2', 'roundRobin.step3'],
-  groupsPlayoff: [
-    'groupsPlayoff.step1',
-    'groupsPlayoff.step2',
-    'groupsPlayoff.step3',
-    'groupsPlayoff.step4',
-  ],
+  groupsPlayoff: ['groupsPlayoff.step1', 'groupsPlayoff.step2', 'groupsPlayoff.step3', 'groupsPlayoff.step4'],
   fullRotation: [
     'fullRotation.step1',
     'fullRotation.step2',
@@ -29,10 +24,7 @@ export const SCHEME_RULE_KEYS: Record<string, readonly string[]> = {
 };
 
 /** Every key any scheme could use — what `hiddenRules` is validated against. */
-export const ALL_RULE_KEYS: readonly string[] = [
-  ...Object.values(SCHEME_RULE_KEYS).flat(),
-  ...GENERAL_RULE_KEYS,
-];
+export const ALL_RULE_KEYS: readonly string[] = [...Object.values(SCHEME_RULE_KEYS).flat(), ...GENERAL_RULE_KEYS];
 
 export function isRuleKey(value: unknown): value is string {
   return typeof value === 'string' && ALL_RULE_KEYS.includes(value);

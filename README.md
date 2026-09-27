@@ -297,7 +297,8 @@ any game has a result (`assertPlanning`).
 | `DELETE` | `/ongoing/solo/:soloId` | Cancel a partnerless registration. |
 | `GET` | `/ongoing/:id/solo/preview` | Preview the rating-based pairing of the solo pool. |
 | `POST` | `/ongoing/:id/solo/form-teams` | Turn the solo pool into pairs. |
-| `POST` | `/ongoing/:id/schedule` | Generate the fixtures. For `fullRotation` this generates **round 1 only**. |
+| `POST` | `/ongoing/:id/solo/disband-teams` | The reverse: every pair goes back to the solo pool. |
+| `POST` | `/ongoing/:id/schedule` | Generate the fixtures — see *Scheduling* below. For `fullRotation` this generates **round 1 only**. |
 | `POST` | `/ongoing/:id/rotation/next-round` | `fullRotation` only: build the next round from this one's results. |
 | `POST` | `/ongoing/:id/playoff` | `groupsPlayoff` only: seed the bracket from the group tables. |
 | `PATCH` | `/ongoing/games/:gameId` | Record a score — open to the tournament's **entrants** as well as its organiser/admins (see below). |
@@ -314,6 +315,25 @@ Everything under `/ongoing` needs a session. Beyond that there are two levels:
   whoever is free walks over and enters the score, so this is deliberately per-event rather than
   per-game — a rotation player changes partner every fixture, and a pair only ever plays two of
   their group's courts.
+
+### Scheduling
+
+`packIntoRounds` in `schedule.ts` turns the fixture list into rounds of at most
+`courts` matches, never with a team twice in a round, and with one more rule: **no
+team sits out two rounds in a row** while it still has a game to play (idling
+before the first game counts; being finished does not). It builds the day round by
+round — a team that sat out the previous round must play in this one — and fills
+every round to as many courts as possible, so the day is no longer than
+`ceil(fixtures / courts)` rounds. Candidates are tried heaviest-first (most games
+still to play), which is what keeps a tail of rounds from stranding a few teams. A
+single pass usually succeeds; up to 60 reshuffled passes cover the tight cases
+(e.g. 7 teams on 2 courts).
+
+The rule is **impossible when `teams >= 4 × courts`** — 8 teams on 2 courts idle
+four every round, so two consecutive idle sets would have to be exact complements
+and the two halves could never meet. There the schedule is still complete, and no
+rest is longer than two rounds. Group stages share the courts, so the rule holds
+across the whole day, not per group.
 
 A player can also withdraw their own entry (`assertOwnEntryOrManager`) until **24 hours before the
 first ball** — `isCancellationOpen`, measured from `eventStartInstant(date, startTime)` in

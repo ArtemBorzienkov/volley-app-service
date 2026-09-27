@@ -175,8 +175,6 @@ export const applyPromotionRelegation = (rankedGroups: string[][]): string[][] =
 
     // Strongest group reads [its stayers, then arrivals]; every other [arrivals from above, arrivals
     // from below, then its own stayers] — so a group's order always runs strongest-first.
-    return isStrongest
-      ? [...stayingFromHere, ...upFromBelow]
-      : [...downFromAbove, ...upFromBelow, ...stayingFromHere];
+    return isStrongest ? [...stayingFromHere, ...upFromBelow] : [...downFromAbove, ...upFromBelow, ...stayingFromHere];
   });
 };
