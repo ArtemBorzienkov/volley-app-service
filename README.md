@@ -349,6 +349,10 @@ in a schedule already built.
 
 ### After the tournament: handing over to `/events`
 
+`PATCH /ongoing/:id/finish` does **not** wait for every fixture: a day can end with games unplayed —
+the final, a 3rd-place match, rotation rounds never generated — and those are simply left out of the
+upload. The only requirement (`assertHasResult`) is that at least one game has a result.
+
 An ongoing tournament is working state, not the archive. When it is finished the frontend builds a
 prefill, the organiser reviews it on `/add-results`, and `POST /events/with-games` writes the real
 `events`, `games` and `game_player_rank` rows. **Once that returns 2xx the client deletes the

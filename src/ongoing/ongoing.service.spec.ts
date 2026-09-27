@@ -2818,7 +2818,8 @@ describe('OngoingService', () => {
       ...over,
     });
 
-    it('refuses to finish a groupsPlayoff tournament before the final is played', async () => {
+    // A day can end before the bracket does; the unplayed final is left out of the upload.
+    it('finishes a groupsPlayoff tournament whose final is still unplayed', async () => {
       prisma.ongoingEvent.findUnique = jest.fn(
         async () =>
           ({
@@ -2832,11 +2833,15 @@ describe('OngoingService', () => {
           } as any),
       );
 
-      await expect(service.finishTournament('event-1', CURRENT_USER)).rejects.toThrow(ConflictException);
-      expect(prisma.ongoingEvent.update).not.toHaveBeenCalled();
+      await service.finishTournament('event-1', CURRENT_USER);
+
+      expect(prisma.ongoingEvent.update).toHaveBeenCalledWith({
+        where: { id: 'event-1' },
+        data: { finishedAt: expect.any(Date) },
+      });
     });
 
-    it('refuses to finish a groupsPlayoff tournament when a 3rd-place match exists but is unplayed', async () => {
+    it('finishes a groupsPlayoff tournament whose 3rd-place match is still unplayed', async () => {
       prisma.ongoingEvent.findUnique = jest.fn(
         async () =>
           ({
@@ -2849,8 +2854,31 @@ describe('OngoingService', () => {
           } as any),
       );
 
-      await expect(service.finishTournament('event-1', CURRENT_USER)).rejects.toThrow(ConflictException);
-      expect(prisma.ongoingEvent.update).not.toHaveBeenCalled();
+      await service.finishTournament('event-1', CURRENT_USER);
+
+      expect(prisma.ongoingEvent.update).toHaveBeenCalledWith({
+        where: { id: 'event-1' },
+        data: { finishedAt: expect.any(Date) },
+      });
+    });
+
+    // Groups played, bracket never generated: the group tables are the result.
+    it('finishes a groupsPlayoff tournament before its playoff exists', async () => {
+      prisma.ongoingEvent.findUnique = jest.fn(
+        async () =>
+          ({
+            ...EVENT_ROW,
+            config: { scheme: 'groupsPlayoff', groupCount: 2, qualifiersPerGroup: 2 },
+            games: [game({ id: 'g1', team1Points: 21, team2Points: 10 })],
+          } as any),
+      );
+
+      await service.finishTournament('event-1', CURRENT_USER);
+
+      expect(prisma.ongoingEvent.update).toHaveBeenCalledWith({
+        where: { id: 'event-1' },
+        data: { finishedAt: expect.any(Date) },
+      });
     });
 
     it('finishes a groupsPlayoff tournament once the final and the 3rd-place match are both played', async () => {
@@ -2908,13 +2936,48 @@ describe('OngoingService', () => {
       expect(prisma.ongoingEvent.update).not.toHaveBeenCalled();
     });
 
-    it('refuses to finish a roundRobin tournament while any game is unplayed', async () => {
+    it('finishes a roundRobin tournament with games still unplayed', async () => {
       prisma.ongoingEvent.findUnique = jest.fn(
         async () =>
           ({
             ...EVENT_ROW,
             config: { scheme: 'roundRobin', groupCount: 1 },
             games: [game({ id: 'g1', team1Points: 21, team2Points: 10 }), game({ id: 'g2' })],
+          } as any),
+      );
+
+      await service.finishTournament('event-1', CURRENT_USER);
+
+      expect(prisma.ongoingEvent.update).toHaveBeenCalledWith({
+        where: { id: 'event-1' },
+        data: { finishedAt: expect.any(Date) },
+      });
+    });
+
+    // Nothing to upload: a schedule with no result is not a finished tournament in any sense.
+    it('refuses to finish while no game has a result', async () => {
+      prisma.ongoingEvent.findUnique = jest.fn(
+        async () =>
+          ({
+            ...EVENT_ROW,
+            config: { scheme: 'roundRobin', groupCount: 1 },
+            games: [game({ id: 'g1' }), game({ id: 'g2' })],
+          } as any),
+      );
+
+      await expect(service.finishTournament('event-1', CURRENT_USER)).rejects.toThrow(
+        'No game has a result yet; there is nothing to finish',
+      );
+      expect(prisma.ongoingEvent.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses to finish a groupsPlayoff tournament with no result anywhere', async () => {
+      prisma.ongoingEvent.findUnique = jest.fn(
+        async () =>
+          ({
+            ...EVENT_ROW,
+            config: { scheme: 'groupsPlayoff', groupCount: 2, qualifiersPerGroup: 2 },
+            games: [game({ id: 'final', phase: 'playoff', bracketRound: 1, bracketSlot: 0 })],
           } as any),
       );
 
@@ -4568,15 +4631,13 @@ describe('OngoingService.finishTournament — fullRotation', () => {
     );
   });
 
-  it('refuses while rounds remain, even though every generated game is played', async () => {
-    // Round 1 of 3: the old "every game has a result" check passes, but the ladder has decided
-    // nothing and the placements would be empty.
+  // The rounds never generated are games never played; the places come from the latest round's
+  // tables (the frontend's computeRotationPlacements falls back to them).
+  it('finishes with rounds still to come', async () => {
     load(3, 1);
 
-    await expect(service.finishTournament('event-1', ORGANISER)).rejects.toThrow(
-      /Round 1 of 3 is played; every round must be complete/,
-    );
-    expect(prisma.ongoingEvent.update).not.toHaveBeenCalled();
+    await expect(service.finishTournament('event-1', ORGANISER)).resolves.toBeDefined();
+    expect(prisma.ongoingEvent.update).toHaveBeenCalled();
   });
 
   it('finishes on the last of several rounds', async () => {
@@ -4585,12 +4646,21 @@ describe('OngoingService.finishTournament — fullRotation', () => {
     await expect(service.finishTournament('event-1', ORGANISER)).resolves.toBeDefined();
   });
 
-  it('still refuses when a fixture has no result', async () => {
+  it('finishes with a fixture of the round unplayed', async () => {
     const row = eventRow(1, 1);
     row.games[0].team1Points = null as never;
     prisma.ongoingEvent.findUnique = jest.fn(async () => row);
 
-    await expect(service.finishTournament('event-1', ORGANISER)).rejects.toThrow(/Not every game has a result/);
+    await expect(service.finishTournament('event-1', ORGANISER)).resolves.toBeDefined();
+  });
+
+  it('refuses when no fixture of the round has a result', async () => {
+    const row = eventRow(1, 1);
+    for (const fixture of row.games) fixture.team1Points = null as never;
+    prisma.ongoingEvent.findUnique = jest.fn(async () => row);
+
+    await expect(service.finishTournament('event-1', ORGANISER)).rejects.toThrow(/No game has a result yet/);
+    expect(prisma.ongoingEvent.update).not.toHaveBeenCalled();
   });
 });
 

@@ -1135,46 +1135,19 @@ export class OngoingService {
   async finishTournament(id: string, currentUser: JwtPayload): Promise<OngoingEventResponseDto> {
     const event = await this.loadEvent(id);
     this.assertCanManage(event.createdByUserId, currentUser);
-    this.assertTournamentComplete(event);
+    this.assertHasResult(event);
 
     await this.prisma.ongoingEvent.update({ where: { id }, data: { finishedAt: new Date() } });
 
     return this.loadEvent(id);
   }
 
-  private assertTournamentComplete(event: OngoingEventResponseDto): void {
-    if (event.config.scheme === 'groupsPlayoff') {
-      const playoffGames = event.games.filter((game) => game.phase === 'playoff');
-      const bracketGames = playoffGames.filter((game) => !game.thirdPlace && game.bracketRound !== null);
-      const thirdPlaceGame = playoffGames.find((game) => game.thirdPlace) ?? null;
-
-      if (!bracketGames.length) {
-        throw new ConflictException('The playoff has not been generated yet; the tournament is not finished');
-      }
-
-      const maxBracketRound = Math.max(...bracketGames.map((game) => game.bracketRound as number));
-      const finalGame = bracketGames.find((game) => game.bracketRound === maxBracketRound) as OngoingGameResponseDto;
-
-      if (!isGamePlayed(finalGame)) {
-        throw new ConflictException('The final has not been played yet; the tournament is not finished');
-      }
-      if (thirdPlaceGame && !isGamePlayed(thirdPlaceGame)) {
-        throw new ConflictException('The 3rd-place match has not been played yet; the tournament is not finished');
-      }
-      return;
-    }
-
-    if (!event.games.length || !event.games.every((game) => isGamePlayed(game))) {
-      throw new ConflictException('Not every game has a result yet; the tournament is not finished');
-    }
-
-    // fullRotation generates one round at a time, so "every game played" is satisfied by round 1 of
-    // 3 while the ladder has decided nothing. Mirrors the frontend's own finish gate.
-    if (event.config.scheme === 'fullRotation' && !event.rotation?.isFinished) {
-      throw new ConflictException(
-        `Round ${event.rotation?.currentRound ?? 0} of ${event.rotation?.totalRounds ?? 0} is played; ` +
-          'every round must be complete before a fullRotation tournament is finished',
-      );
+  // Finishing does not wait for every fixture: a day can end with games unplayed, and those are simply
+  // left out of the upload — the frontend's prefill only carries played games. The one thing that has
+  // to exist is a result, or there is nothing to upload at all.
+  private assertHasResult(event: OngoingEventResponseDto): void {
+    if (!event.games.some((game) => isGamePlayed(game))) {
+      throw new ConflictException('No game has a result yet; there is nothing to finish');
     }
   }
 
