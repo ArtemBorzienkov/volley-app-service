@@ -46,6 +46,48 @@ export const shuffle = <T>(items: T[], random: () => number = Math.random): T[] 
   return shuffled;
 };
 
+/** When a court can be used, in 1-based rounds. A null `toRound` runs to the end of the tournament. */
+export interface CourtWindow {
+  fromRound: number;
+  toRound: number | null;
+}
+
+/**
+ * The courts cannot hold every fixture. The organiser's ranges are expected never to allow this; it
+ * exists so that a mistake surfaces as an error rather than as fixtures silently left out.
+ */
+export class CourtsExhaustedError extends Error {
+  constructor(readonly fixtures: number, readonly unscheduled: number) {
+    super(`${unscheduled} of ${fixtures} matches do not fit on the courts; extend a court's rounds or add one`);
+  }
+}
+
+/** Positions (1-based, in list order) of the courts open in a round — the order they fill in. */
+export const openCourts = (courts: CourtWindow[], round: number): number[] =>
+  courts.flatMap((court, index) =>
+    court.fromRound <= round && (court.toRound === null || round <= court.toRound) ? [index + 1] : [],
+  );
+
+const allDayCourts = (count: number): CourtWindow[] =>
+  Array.from({ length: Math.max(1, Math.floor(count)) }, () => ({ fromRound: 1, toRound: null }));
+
+/** The last round any court is open in, or Infinity when one runs to the end. */
+const lastOpenRound = (courts: CourtWindow[]): number =>
+  courts.some((court) => court.toRound === null)
+    ? Infinity
+    : Math.max(0, ...courts.map((court) => court.toRound as number));
+
+/** The earliest round by which the courts, fully used, have room for every fixture. */
+const fewestRoundsFor = (fixtures: number, courts: CourtWindow[]): number => {
+  const last = lastOpenRound(courts);
+  let room = 0;
+  for (let round = 1; round <= last; round += 1) {
+    room += openCourts(courts, round).length;
+    if (room >= fixtures) return round;
+  }
+  return Number.POSITIVE_INFINITY;
+};
+
 interface PendingMatch {
   team1Id: string;
   team2Id: string;
@@ -55,6 +97,8 @@ interface PendingMatch {
 
 interface Attempt {
   matches: ScheduledMatch[];
+  /** Fixtures left over when the courts closed; anything above 0 means the courts ran out. */
+  unscheduled: number;
   /** Rounds a team sat out on top of the one it is allowed; 0 means the rule held for everyone. */
   extraRests: number;
   rounds: number;
@@ -66,8 +110,12 @@ const MAX_ATTEMPTS = 60;
 const ROUND_SEARCH_BUDGET = 4000;
 
 /**
- * Packs fixtures into rounds of at most `courts` matches, with no team twice in a round, so that no
- * team sits out two rounds in a row while it still has a game to play.
+ * Packs fixtures into rounds, no team twice in a round, so that no team sits out two rounds in a row
+ * while it still has a game to play.
+ *
+ * `courts` is either a count of courts open all day or the organiser's court list. Each round uses
+ * the courts open in it, in list order — so a court open only for rounds 1–4 adds a match to those
+ * rounds and none after — and a match's `court` is that court's position in the list.
  *
  * Built round by round: a team that sat out the previous round must play in this one, and every
  * round is filled to as many courts as possible so the day is no longer than it has to be. Where
@@ -75,34 +123,37 @@ const ROUND_SEARCH_BUDGET = 4000;
  * is still complete, with as few extra rests as the attempts found.
  *
  * The input order is the first attempt's tie-break, so a shuffled input still gives a varied
- * schedule; restarts reshuffle with `random`.
+ * schedule; restarts reshuffle with `random`. Throws CourtsExhaustedError if no attempt fits every
+ * fixture before the last court closes.
  */
 export const packIntoRounds = (
   pairs: Array<[string, string]>,
-  courts: number,
+  courts: number | CourtWindow[],
   random: () => number = Math.random,
   attempts: number = MAX_ATTEMPTS,
 ): ScheduledMatch[] => {
   if (!pairs.length) return [];
-  const courtCount = Math.max(1, Math.floor(courts));
-  const fewestRounds = Math.ceil(pairs.length / courtCount);
+  const windows = typeof courts === 'number' ? allDayCourts(courts) : courts;
+  const fewestRounds = fewestRoundsFor(pairs.length, windows);
 
-  let best = scheduleAttempt(pairs, courtCount);
+  let best = scheduleAttempt(pairs, windows);
   for (let attempt = 1; attempt < attempts; attempt += 1) {
-    if (best.extraRests === 0 && best.rounds === fewestRounds) break;
-    const candidate = scheduleAttempt(shuffle(pairs, random), courtCount);
+    if (best.unscheduled === 0 && best.extraRests === 0 && best.rounds === fewestRounds) break;
+    const candidate = scheduleAttempt(shuffle(pairs, random), windows);
     if (isBetter(candidate, best)) best = candidate;
   }
 
+  if (best.unscheduled > 0) throw new CourtsExhaustedError(pairs.length, best.unscheduled);
   return best.matches;
 };
 
-const isBetter = (candidate: Attempt, current: Attempt): boolean =>
-  candidate.extraRests !== current.extraRests
-    ? candidate.extraRests < current.extraRests
-    : candidate.rounds < current.rounds;
+const isBetter = (candidate: Attempt, current: Attempt): boolean => {
+  if (candidate.unscheduled !== current.unscheduled) return candidate.unscheduled < current.unscheduled;
+  if (candidate.extraRests !== current.extraRests) return candidate.extraRests < current.extraRests;
+  return candidate.rounds < current.rounds;
+};
 
-function scheduleAttempt(pairs: Array<[string, string]>, courts: number): Attempt {
+function scheduleAttempt(pairs: Array<[string, string]>, courts: CourtWindow[]): Attempt {
   let remaining: PendingMatch[] = pairs.map(([team1Id, team2Id], index) => ({ team1Id, team2Id, index }));
   const gamesLeft = new Map<string, number>();
   for (const match of remaining) {
@@ -112,23 +163,30 @@ function scheduleAttempt(pairs: Array<[string, string]>, courts: number): Attemp
   const lastPlayed = new Map<string, number>();
 
   const matches: ScheduledMatch[] = [];
+  const closesAfter = lastOpenRound(courts);
   let extraRests = 0;
   let round = 0;
+  // The last round that had a court. A round with none is a break for everyone, not a rest.
+  let previousRound = 0;
 
-  while (remaining.length) {
+  while (remaining.length && round < closesAfter) {
     round += 1;
+    const open = openCourts(courts, round);
+    if (!open.length) continue;
+
     const mustPlay = new Set(
       [...gamesLeft]
-        .filter(([teamId, left]) => left > 0 && (lastPlayed.get(teamId) ?? 0) < round - 1)
+        .filter(([teamId, left]) => left > 0 && (lastPlayed.get(teamId) ?? 0) < previousRound)
         .map(([id]) => id),
     );
+    previousRound = round;
 
-    const chosen = pickRound(remaining, courts, mustPlay, gamesLeft);
+    const chosen = pickRound(remaining, open.length, mustPlay, gamesLeft);
     const playing = new Set(chosen.flatMap((match) => [match.team1Id, match.team2Id]));
     for (const teamId of mustPlay) if (!playing.has(teamId)) extraRests += 1;
 
     chosen.forEach((match, order) => {
-      matches.push({ team1Id: match.team1Id, team2Id: match.team2Id, round, court: order + 1, order });
+      matches.push({ team1Id: match.team1Id, team2Id: match.team2Id, round, court: open[order], order });
       for (const teamId of [match.team1Id, match.team2Id]) {
         gamesLeft.set(teamId, (gamesLeft.get(teamId) ?? 0) - 1);
         lastPlayed.set(teamId, round);
@@ -138,7 +196,7 @@ function scheduleAttempt(pairs: Array<[string, string]>, courts: number): Attemp
     remaining = remaining.filter((match) => !chosenIndexes.has(match.index));
   }
 
-  return { matches, extraRests, rounds: round };
+  return { matches, unscheduled: remaining.length, extraRests, rounds: previousRound };
 }
 
 /**

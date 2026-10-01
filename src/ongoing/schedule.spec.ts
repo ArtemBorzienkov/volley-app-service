@@ -4,6 +4,8 @@ import {
   packIntoRounds,
   generateSchedule,
   shuffle,
+  CourtsExhaustedError,
+  CourtWindow,
   ScheduledMatch,
 } from './schedule';
 
@@ -308,5 +310,136 @@ describe('generateSchedule — nobody sits out two rounds in a row', () => {
 
     expect(matches).toHaveLength(45);
     expect(roundCount(matches)).toBe(45);
+  });
+});
+
+describe('packIntoRounds — named and partial courts', () => {
+  const allDay: CourtWindow = { fromRound: 1, toRound: null };
+  const between = (fromRound: number, toRound: number | null): CourtWindow => ({ fromRound, toRound });
+  const SEEDS = Array.from({ length: 20 }, (_, index) => index + 1);
+
+  const schedule = (teams: number, courts: CourtWindow[], seed: number) => {
+    const random = seeded(seed);
+    return packIntoRounds(shuffle(buildPairings(teamsNamed(teams), 1), random), courts, random);
+  };
+  const inRound = (matches: ScheduledMatch[], round: number) => matches.filter((match) => match.round === round);
+
+  // The case this was built for: three courts all day, a fourth only for the first four rounds.
+  describe('8 teams, three courts all day and a fourth for rounds 1–4', () => {
+    const COURTS = [allDay, allDay, allDay, between(1, 4)];
+
+    it('uses the fourth court in rounds 1–4 and never after', () => {
+      for (const seed of SEEDS) {
+        const matches = schedule(8, COURTS, seed);
+        const onFourth = matches.filter((match) => match.court === 4).map((match) => match.round);
+
+        expect(onFourth.sort((a, b) => a - b)).toEqual([1, 2, 3, 4]);
+      }
+    });
+
+    // 4 rounds x 4 courts = 16, then the remaining 12 on three courts = 4 more rounds.
+    it('fits the 28 fixtures in 8 rounds instead of the 10 three courts would take', () => {
+      const stretched = SEEDS.filter((seed) => roundCount(schedule(8, COURTS, seed)) !== 8);
+
+      expect(stretched).toEqual([]);
+    });
+
+    it('still schedules every fixture, none twice', () => {
+      const matches = schedule(8, COURTS, 1);
+      const keys = matches.map((match) => [match.team1Id, match.team2Id].sort().join('-'));
+
+      expect(matches).toHaveLength(28);
+      expect(new Set(keys).size).toBe(28);
+    });
+
+    it('keeps nobody sitting out two rounds in a row', () => {
+      const failing = SEEDS.filter((seed) => longestRest(schedule(8, COURTS, seed)) > 1);
+
+      expect(failing).toEqual([]);
+    });
+
+    it('never puts two matches on one court in a round', () => {
+      const matches = schedule(8, COURTS, 2);
+      for (let round = 1; round <= roundCount(matches); round += 1) {
+        const courts = inRound(matches, round).map((match) => match.court);
+        expect(new Set(courts).size).toBe(courts.length);
+      }
+    });
+  });
+
+  it('opens a court only from its first round', () => {
+    for (const seed of SEEDS.slice(0, 10)) {
+      const matches = schedule(8, [allDay, allDay, allDay, between(3, null)], seed);
+      const rounds = matches.filter((match) => match.court === 4).map((match) => match.round);
+
+      expect(Math.min(...rounds)).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it('keeps a court to a range in the middle of the day', () => {
+    for (const seed of SEEDS.slice(0, 10)) {
+      const rounds = schedule(8, [allDay, allDay, between(2, 5)], seed)
+        .filter((match) => match.court === 3)
+        .map((match) => match.round);
+
+      expect(rounds.every((round) => round >= 2 && round <= 5)).toBe(true);
+    }
+  });
+
+  // The first court in the list is the one the organiser wants used first — the main court.
+  it('fills courts in list order when a round has fewer matches than courts', () => {
+    // 5 teams on 4 courts: at most two matches a round, so courts 3 and 4 stay empty.
+    for (const seed of SEEDS.slice(0, 10)) {
+      const used = new Set(schedule(5, [allDay, allDay, allDay, allDay], seed).map((match) => match.court));
+
+      expect([...used].sort()).toEqual([1, 2]);
+    }
+  });
+
+  it('reports a court by its position in the list, not by its slot in the round', () => {
+    // Court 1 is closed in round 2, so round 2's only-other-court match sits on court 2, order 0.
+    const matches = packIntoRounds(
+      [
+        ['a', 'b'],
+        ['c', 'd'],
+        ['a', 'c'],
+      ],
+      [between(1, 1), allDay],
+      seeded(1),
+    );
+    const secondRound = inRound(matches, 2);
+
+    expect(secondRound.map((match) => [match.court, match.order])).toEqual([[2, 0]]);
+  });
+
+  // A safety net only: the organiser's ranges are expected to leave room for everything.
+  it('refuses rather than dropping fixtures when every court closes too soon', () => {
+    // 6 teams = 15 fixtures, but two courts for rounds 1–4 hold 8.
+    expect(() => schedule(6, [between(1, 4), between(1, 4)], 1)).toThrow(CourtsExhaustedError);
+    expect(() => schedule(6, [between(1, 4), between(1, 4)], 1)).toThrow(
+      "7 of 15 matches do not fit on the courts; extend a court's rounds or add one",
+    );
+  });
+
+  it('fits exactly when the closing courts hold just enough', () => {
+    // 4 teams = 6 fixtures; two courts for rounds 1–3 hold 6, and a round robin of 4 packs perfectly.
+    expect(schedule(4, [between(1, 3), between(1, 3)], 1)).toHaveLength(6);
+  });
+
+  // Not expected in practice, but a round with no court must not count as everyone resting.
+  it('treats a round with no court open as a break, not a rest', () => {
+    for (const seed of SEEDS.slice(0, 10)) {
+      const matches = schedule(5, [between(1, 2), between(1, 2), between(4, null), between(4, null)], seed);
+
+      expect(inRound(matches, 3)).toEqual([]);
+      expect(matches).toHaveLength(10);
+    }
+  });
+
+  it('behaves exactly as before for a bare count of courts', () => {
+    const random = () => 0.5;
+    const pairs = buildPairings(teamsNamed(6), 1);
+
+    expect(packIntoRounds(pairs, 2, random)).toEqual(packIntoRounds(pairs, [allDay, allDay], random));
   });
 });

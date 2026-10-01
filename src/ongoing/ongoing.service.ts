@@ -5,6 +5,7 @@ import {
   ConflictException,
   ForbiddenException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { UserService } from '../user/user.service';
 import { resolveDisplayName } from '../user/display-name';
@@ -38,7 +39,8 @@ import {
   OngoingRotationStandingDto,
   OngoingRotationStateDto,
 } from './dto/ongoing-event-response.dto';
-import { buildGroupPairings, shuffle, packIntoRounds } from './schedule';
+import { buildGroupPairings, shuffle, packIntoRounds, CourtsExhaustedError, ScheduledMatch } from './schedule';
+import { CourtPlan, DEFAULT_COURTS, isStructuralCourtChange, normaliseCourts } from './courts';
 import { CANCELLATION_WINDOW_MS, eventStartInstant } from './registration-window';
 import { isRuleKey } from './rules';
 import { effectiveTeamCount, pairByRating } from './pairing';
@@ -61,6 +63,7 @@ const PLAYER_USER_SELECT = { select: { isAnonymous: true } } as const;
 
 const EVENT_INCLUDE = {
   config: true,
+  courts: { orderBy: { position: 'asc' as const } },
   teams: {
     include: {
       player1: { include: { playerStats: true, user: PLAYER_USER_SELECT } },
@@ -202,6 +205,8 @@ export class OngoingService {
       rotationRounds: createOngoingEventDto.rotationRounds,
     });
     const visibility = this.normaliseVisibility(createOngoingEventDto.visibility);
+    const courts =
+      createOngoingEventDto.courts === undefined ? DEFAULT_COURTS : normaliseCourts(createOngoingEventDto.courts);
     // fullRotation registers players, not pairs, so its entry path is the solo one — the flag is not
     // the organiser's to turn off there.
     // fullRotation has no pair entry path at all, so it is solo-only by construction.
@@ -257,10 +262,17 @@ export class OngoingService {
       startTime,
       location,
       createdByUserId: currentUser.sub,
+      courts: {
+        create: courts.map((court, index) => ({
+          position: index + 1,
+          label: court.label,
+          fromRound: court.fromRound,
+          toRound: court.toRound,
+        })),
+      },
       config: {
         create: {
           gamesPerPair: 1,
-          courts: 1,
           maxTeams,
           scheme,
           groupCount,
@@ -306,17 +318,20 @@ export class OngoingService {
       throw new BadRequestException('gamesPerPair and courts are required');
     }
 
-    const { gamesPerPair, courts } = updateOngoingConfigDto;
+    const { gamesPerPair } = updateOngoingConfigDto;
 
     if (![1, 2, 3].includes(gamesPerPair)) {
       throw new BadRequestException('gamesPerPair must be 1, 2 or 3');
     }
-    if (!Number.isInteger(courts) || courts < 1) {
-      throw new BadRequestException('courts must be at least 1');
-    }
 
     const event = await this.loadEvent(id);
     this.assertCanManage(event.createdByUserId, currentUser);
+    // Omitted = unchanged, so a client that only edits the format need not resend the courts.
+    const courts =
+      updateOngoingConfigDto.courts === undefined
+        ? event.config.courts
+        : normaliseCourts(updateOngoingConfigDto.courts);
+    const courtsRestructured = isStructuralCourtChange(event.config.courts, courts);
     const maxTeams = this.normaliseMaxTeams(updateOngoingConfigDto.maxTeams, event.teams.length);
     const { scheme, groupCount, qualifiersPerGroup, rotationRounds } = this.normaliseScheme({
       scheme: updateOngoingConfigDto.scheme,
@@ -354,38 +369,74 @@ export class OngoingService {
       throw new BadRequestException('Solo registration cannot be turned off while the solo pool is not empty');
     }
 
-    await this.prisma.ongoingEventConfig.upsert({
-      where: { eventId: id },
-      create: {
-        eventId: id,
-        gamesPerPair,
-        courts,
-        maxTeams,
-        scheme,
-        groupCount,
-        qualifiersPerGroup,
-        rotationRounds,
-        visibility,
-        allowSoloRegistration,
-        soloOnlyRegistration,
-        hiddenRules,
-      },
-      update: {
-        gamesPerPair,
-        courts,
-        maxTeams,
-        scheme,
-        groupCount,
-        qualifiersPerGroup,
-        rotationRounds,
-        visibility,
-        allowSoloRegistration,
-        soloOnlyRegistration,
-        hiddenRules,
-      },
+    // A rename is always fine — fixtures point at a court's position, not its label. Anything else
+    // would move or strand a fixture, and once one has a result that rewrites what was played.
+    if (courtsRestructured && event.games.some((game) => isGamePlayed(game))) {
+      throw new ConflictException(
+        'Once a result is recorded the courts can only be renamed — adding, removing, moving a court or ' +
+          'changing its rounds would move fixtures already played',
+      );
+    }
+
+    // Before the first result nothing is lost by rebuilding, and an old schedule would otherwise keep
+    // fixtures on courts that are gone or closed. Planned before any write, so a court list that
+    // cannot hold every fixture is refused with nothing changed.
+    const rebuilt =
+      courtsRestructured && scheme !== 'fullRotation' && event.games.some((game) => game.phase === 'group')
+        ? this.planGroupSchedule(event, { scheme, groupCount, qualifiersPerGroup, gamesPerPair }, courts)
+        : null;
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.ongoingEventConfig.upsert({
+        where: { eventId: id },
+        create: {
+          eventId: id,
+          gamesPerPair,
+          maxTeams,
+          scheme,
+          groupCount,
+          qualifiersPerGroup,
+          rotationRounds,
+          visibility,
+          allowSoloRegistration,
+          soloOnlyRegistration,
+          hiddenRules,
+        },
+        update: {
+          gamesPerPair,
+          maxTeams,
+          scheme,
+          groupCount,
+          qualifiersPerGroup,
+          rotationRounds,
+          visibility,
+          allowSoloRegistration,
+          soloOnlyRegistration,
+          hiddenRules,
+        },
+      });
+
+      if (courtsRestructured || courts.some((court, index) => court.label !== event.config.courts[index].label)) {
+        await this.writeCourts(tx, id, courts);
+      }
+      if (rebuilt) await this.writeGroupSchedule(tx, id, rebuilt);
     });
 
     return this.loadEvent(id);
+  }
+
+  // Replaced wholesale, positions renumbered 1..N in list order — the order the schedule fills them in.
+  private async writeCourts(tx: Prisma.TransactionClient, eventId: string, courts: CourtPlan[]): Promise<void> {
+    await tx.ongoingCourt.deleteMany({ where: { eventId } });
+    await tx.ongoingCourt.createMany({
+      data: courts.map((court, index) => ({
+        eventId,
+        position: index + 1,
+        label: court.label,
+        fromRound: court.fromRound,
+        toRound: court.toRound,
+      })),
+    });
   }
 
   async setTeams(
@@ -823,11 +874,26 @@ export class OngoingService {
       return this.writeRotationRound(id, 1, this.seedFirstRotationRound(event));
     }
 
+    const plan = this.planGroupSchedule(event, event.config, event.config.courts);
+    await this.prisma.$transaction((tx) => this.writeGroupSchedule(tx, id, plan));
+
+    return this.loadEvent(id);
+  }
+
+  /**
+   * The group-stage fixtures for this roster, config and court list — computed, not written, so a
+   * caller can find out it does not fit before anything is touched.
+   */
+  private planGroupSchedule(
+    event: OngoingEventResponseDto,
+    config: { scheme: string; groupCount: number; qualifiersPerGroup: number | null; gamesPerPair: number },
+    courts: CourtPlan[],
+  ): { groups: string[][]; matches: ScheduledMatch[] } {
     if (event.teams.length < 2) {
       throw new BadRequestException('At least two teams are required to generate a schedule');
     }
 
-    const { scheme, groupCount, qualifiersPerGroup, gamesPerPair, courts } = event.config;
+    const { scheme, groupCount, qualifiersPerGroup, gamesPerPair } = config;
     const groups = dealIntoGroups(
       event.teams.map((team) => team.id),
       groupCount,
@@ -846,34 +912,41 @@ export class OngoingService {
       }
     }
 
-    const matches = packIntoRounds(shuffle(buildGroupPairings(groups, gamesPerPair)), courts);
+    try {
+      return { groups, matches: packIntoRounds(shuffle(buildGroupPairings(groups, gamesPerPair)), courts) };
+    } catch (error) {
+      if (error instanceof CourtsExhaustedError) throw new BadRequestException(error.message);
+      throw error;
+    }
+  }
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.ongoingGame.deleteMany({ where: { eventId: id } });
-      await tx.ongoingGame.createMany({
-        data: matches.map((match) => ({
-          eventId: id,
-          team1Id: match.team1Id,
-          team2Id: match.team2Id,
-          team1Points: null,
-          team2Points: null,
-          round: match.round,
-          court: match.court,
-          order: match.order,
-          phase: 'group',
-          bracketRound: null,
-          bracketSlot: null,
-        })),
-      });
-
-      for (let groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
-        for (const teamId of groups[groupIndex]) {
-          await tx.ongoingTeam.update({ where: { id: teamId }, data: { groupIndex } });
-        }
-      }
+  private async writeGroupSchedule(
+    tx: Prisma.TransactionClient,
+    id: string,
+    { groups, matches }: { groups: string[][]; matches: ScheduledMatch[] },
+  ): Promise<void> {
+    await tx.ongoingGame.deleteMany({ where: { eventId: id } });
+    await tx.ongoingGame.createMany({
+      data: matches.map((match) => ({
+        eventId: id,
+        team1Id: match.team1Id,
+        team2Id: match.team2Id,
+        team1Points: null,
+        team2Points: null,
+        round: match.round,
+        court: match.court,
+        order: match.order,
+        phase: 'group',
+        bracketRound: null,
+        bracketSlot: null,
+      })),
     });
 
-    return this.loadEvent(id);
+    for (let groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
+      for (const teamId of groups[groupIndex]) {
+        await tx.ongoingTeam.update({ where: { id: teamId }, data: { groupIndex } });
+      }
+    }
   }
 
   /**
@@ -1698,7 +1771,11 @@ export class OngoingService {
       createdByUserId: event.createdByUserId ?? null,
       config: {
         gamesPerPair: event.config ? event.config.gamesPerPair : 1,
-        courts: event.config ? event.config.courts : 1,
+        // Every event has courts since the migration that introduced them; the default covers a row
+        // loaded without the relation.
+        courts: event.courts?.length
+          ? event.courts.map((court) => ({ label: court.label, fromRound: court.fromRound, toRound: court.toRound }))
+          : DEFAULT_COURTS.map((court) => ({ ...court })),
         // Column absent (not selected) and explicit null both mean "no limit" to the addTeam guard.
         maxTeams: event.config && event.config.maxTeams !== undefined ? event.config.maxTeams : null,
         scheme: event.config && event.config.scheme !== undefined ? event.config.scheme : 'roundRobin',

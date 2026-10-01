@@ -140,10 +140,16 @@ Accounts and live tournaments were added later and live in their own models:
   preference — see below.
 - **OngoingEvent** (`ongoing_events`) — a tournament being run live, with its
   creator, `finishedAt`, and the relations below.
-- **OngoingEventConfig** (`ongoing_event_config`) — one row per event: `courts`,
+- **OngoingEventConfig** (`ongoing_event_config`) — one row per event:
   `gamesPerPair`, `maxTeams`, `visibility` (`public` | `private`),
   `allowSoloRegistration`, `soloOnlyRegistration`, `hiddenRules`, and the scheme
   fields `scheme`, `groupCount`, `qualifiersPerGroup`, `rotationRounds`.
+- **OngoingCourt** (`ongoing_courts`) — the event's courts in fill order: `position`
+  (1..N), a free-text `label` (≤ 10 chars, unique per event regardless of case), and
+  the rounds it is open in, `fromRound`..`toRound` (`toRound` null = to the end). The
+  API returns them as `config.courts`. A scheduled group-stage game's `court` is the
+  court's **position**, not its label — that is what lets a rename reach every
+  fixture. Migrated from the old `config.courts` count as courts "1".."N", all day.
 - **OngoingTeam** (`ongoing_teams`) — a registered pair plus its `groupIndex`.
 - **OngoingSoloPlayer** (`ongoing_solo_players`) — a player registered without a
   partner. Unique per `(eventId, playerId)`; it is also the **roster** of a
@@ -318,13 +324,13 @@ Everything under `/ongoing` needs a session. Beyond that there are two levels:
 
 ### Scheduling
 
-`packIntoRounds` in `schedule.ts` turns the fixture list into rounds of at most
-`courts` matches, never with a team twice in a round, and with one more rule: **no
+`packIntoRounds` in `schedule.ts` turns the fixture list into rounds, one match per
+court open in that round, never with a team twice in a round, and with one more rule: **no
 team sits out two rounds in a row** while it still has a game to play (idling
 before the first game counts; being finished does not). It builds the day round by
 round — a team that sat out the previous round must play in this one — and fills
-every round to as many courts as possible, so the day is no longer than
-`ceil(fixtures / courts)` rounds. Candidates are tried heaviest-first (most games
+every round to as many courts as possible, so the day is as short as the courts
+allow. Candidates are tried heaviest-first (most games
 still to play), which is what keeps a tail of rounds from stranding a few teams. A
 single pass usually succeeds; up to 60 reshuffled passes cover the tight cases
 (e.g. 7 teams on 2 courts).
@@ -334,6 +340,25 @@ four every round, so two consecutive idle sets would have to be exact complement
 and the two halves could never meet. There the schedule is still complete, and no
 rest is longer than two rounds. Group stages share the courts, so the rule holds
 across the whole day, not per group.
+
+**Named and partial courts.** Each round uses the courts open in it, filled **in
+list order** — the first court in the list takes the first match, so the organiser
+puts the main court on top. With three courts all day and a fourth for rounds 1–4,
+8 teams play 4 matches a round for four rounds and 3 after: 28 fixtures in 8 rounds
+instead of 10. A round with no court open is a break for everyone, not a rest. If
+every court has an end and the fixtures do not fit, generation is refused with
+`CourtsExhaustedError` → 400 rather than dropping anything. Round robin and the
+group stage of groups+playoff use the court list; full rotation (one court per
+group, by construction) and the playoff (not court-scheduled) ignore it.
+
+**Editing courts** (`PUT :id/config` with `courts`, in `courts.ts`): a **rename** is
+allowed at any time and changes nothing but what the cards say. Anything else —
+adding, removing, moving a court, changing its rounds (`isStructuralCourtChange`) —
+is allowed only **before the first result**, and if a group schedule exists it is
+**rebuilt in the same transaction**, planned before any write so a court list that
+cannot hold the fixtures is refused with nothing changed. After the first result it
+is a 409. A bare number is still accepted as that many all-day courts, for a client
+that predates named courts.
 
 A player can also withdraw their own entry (`assertOwnEntryOrManager`) until **24 hours before the
 first ball** — `isCancellationOpen`, measured from `eventStartInstant(date, startTime)` in

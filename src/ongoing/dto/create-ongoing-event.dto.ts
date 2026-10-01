@@ -1,3 +1,4 @@
+import { OngoingCourtInput } from './ongoing-court.dto';
 import { IsString, IsDateString, IsOptional, IsArray, IsInt, IsBoolean } from 'class-validator';
 
 export class CreateOngoingEventDto {
@@ -51,6 +52,10 @@ export class CreateOngoingEventDto {
   @IsOptional()
   @IsBoolean()
   allowSoloRegistration?: boolean;
+
+  /** The court list in fill order; omitted = one court, "1", open all day. */
+  @IsOptional()
+  courts?: OngoingCourtInput[] | number;
 
   /** Pairs cannot register at all; implies allowSoloRegistration, which the service forces on. */
   @IsOptional()

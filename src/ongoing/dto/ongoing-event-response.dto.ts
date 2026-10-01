@@ -1,3 +1,4 @@
+import { OngoingCourtDto } from './ongoing-court.dto';
 export class OngoingTeamPlayerDto {
   id: string;
   name: string;
@@ -57,7 +58,8 @@ export class OngoingGameResponseDto {
 
 export class OngoingEventConfigResponseDto {
   gamesPerPair: number;
-  courts: number;
+  /** In fill order. A scheduled game's `court` is its 1-based position in this list. */
+  courts: OngoingCourtDto[];
   maxTeams: number | null;
   scheme: string;
   groupCount: number;

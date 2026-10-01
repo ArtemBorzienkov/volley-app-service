@@ -1,11 +1,16 @@
 import { IsArray, IsBoolean, IsInt, IsOptional, IsString } from 'class-validator';
+import { OngoingCourtInput } from './ongoing-court.dto';
 
 export class UpdateOngoingConfigDto {
   @IsInt()
   gamesPerPair: number;
 
-  @IsInt()
-  courts: number;
+  /**
+   * The court list in fill order, or — from a client that predates named courts — a number of
+   * all-day courts. Omitted = unchanged. Validated by the service's normaliseCourts.
+   */
+  @IsOptional()
+  courts?: OngoingCourtInput[] | number;
 
   @IsOptional()
   @IsInt()

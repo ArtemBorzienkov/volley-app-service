@@ -160,6 +160,7 @@ model OngoingEvent {
   games         OngoingGame[]
   soloPlayers   OngoingSoloPlayer[]
   rotationSlots OngoingRotationSlot[]
+  courts        OngoingCourt[]
 
   @@index([date])
   @@map("ongoing_events")
@@ -169,7 +170,6 @@ model OngoingEventConfig {
   id                 String @id @default(uuid())
   eventId            String @unique @map("event_id")
   gamesPerPair       Int    @default(1) @map("games_per_pair")
-  courts             Int    @default(1)
   maxTeams           Int?   @map("max_teams")
   scheme             String @default("roundRobin")
   groupCount         Int    @default(1) @map("group_count")
@@ -310,4 +310,21 @@ model User {
   ongoingEventsCreated OngoingEvent[]
 
   @@map("users")
+}
+
+/// A court the schedule may use, in the organiser's order — the first one fills first. A scheduled
+/// game's `court` is this row's `position`, not its label, so a rename reaches every fixture.
+model OngoingCourt {
+  id        String  @id @default(uuid())
+  eventId   String  @map("event_id")
+  position  Int
+  label     String
+  fromRound Int     @default(1) @map("from_round")
+  /// Null = to the end of the tournament.
+  toRound   Int?    @map("to_round")
+
+  event OngoingEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, position])
+  @@map("ongoing_courts")
 }

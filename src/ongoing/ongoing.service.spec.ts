@@ -6,11 +6,15 @@ import { UserService } from '../user/user.service';
 
 const EVENT_ROW = {
   id: 'event-1',
+  courts: [
+    { id: 'c1', eventId: 'event-1', position: 1, label: '1', fromRound: 1, toRound: null },
+    { id: 'c2', eventId: 'event-1', position: 2, label: '2', fromRound: 1, toRound: null },
+  ],
   name: 'WBSA Warsaw',
   date: new Date('2026-08-23T10:00:00.000Z'),
   createdAt: new Date('2026-08-23T09:00:00.000Z'),
   updatedAt: new Date('2026-08-23T09:00:00.000Z'),
-  config: { gamesPerPair: 1, courts: 2, visibility: 'public', allowSoloRegistration: false },
+  config: { gamesPerPair: 1, visibility: 'public', allowSoloRegistration: false },
   teams: [],
   soloPlayers: [],
   rotationSlots: [],
@@ -27,7 +31,11 @@ function buildPrismaMock() {
       delete: jest.fn(async () => EVENT_ROW as any),
     },
     ongoingEventConfig: {
-      upsert: jest.fn(async () => ({ gamesPerPair: 1, courts: 2 })),
+      upsert: jest.fn(async () => ({ gamesPerPair: 1 })),
+    },
+    ongoingCourt: {
+      deleteMany: jest.fn(async () => ({ count: 0 })),
+      createMany: jest.fn(async () => ({ count: 1 })),
     },
     ongoingTeam: {
       create: jest.fn(async () => ({ id: 't2' })),
@@ -104,10 +112,11 @@ describe('OngoingService', () => {
           startTime: null,
           location: null,
           createdByUserId: 'user-1',
+          // Omitted courts default to the single all-day court every tournament used to have.
+          courts: { create: [{ position: 1, label: '1', fromRound: 1, toRound: null }] },
           config: {
             create: {
               gamesPerPair: 1,
-              courts: 1,
               maxTeams: null,
               scheme: 'roundRobin',
               groupCount: 1,
@@ -161,7 +170,10 @@ describe('OngoingService', () => {
       expect(result.id).toBe('event-1');
       expect(result.config).toEqual({
         gamesPerPair: 1,
-        courts: 2,
+        courts: [
+          { label: '1', fromRound: 1, toRound: null },
+          { label: '2', fromRound: 1, toRound: null },
+        ],
         visibility: 'public',
         allowSoloRegistration: false,
         soloOnlyRegistration: false,
@@ -206,9 +218,10 @@ describe('OngoingService', () => {
       );
     });
 
+    // A bare number is what a client built before named courts sends; it still has to be valid.
     it('rejects fewer than one court', async () => {
       await expect(service.updateConfig('event-1', { gamesPerPair: 1, courts: 0 }, CURRENT_USER)).rejects.toThrow(
-        new BadRequestException('courts must be at least 1'),
+        new BadRequestException('courts must be between 1 and 20'),
       );
     });
 
@@ -220,7 +233,6 @@ describe('OngoingService', () => {
         create: {
           eventId: 'event-1',
           gamesPerPair: 2,
-          courts: 3,
           maxTeams: null,
           scheme: 'roundRobin',
           groupCount: 1,
@@ -233,7 +245,6 @@ describe('OngoingService', () => {
         },
         update: {
           gamesPerPair: 2,
-          courts: 3,
           maxTeams: null,
           scheme: 'roundRobin',
           groupCount: 1,
@@ -1432,7 +1443,7 @@ describe('OngoingService', () => {
     const OPEN_EVENT = {
       ...EVENT_ROW,
       date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-      config: { gamesPerPair: 1, courts: 2, maxTeams: null },
+      config: { gamesPerPair: 1, maxTeams: null },
       teams: [{ id: 't1', player1: { id: 'p1', name: 'A' }, player2: { id: 'p2', name: 'B' } }],
     };
 
@@ -1534,7 +1545,7 @@ describe('OngoingService', () => {
         async () =>
           ({
             ...OPEN_EVENT,
-            config: { gamesPerPair: 1, courts: 2, maxTeams: 1 },
+            config: { gamesPerPair: 1, maxTeams: 1 },
           } as any),
       );
 
@@ -1549,7 +1560,7 @@ describe('OngoingService', () => {
         async () =>
           ({
             ...OPEN_EVENT,
-            config: { gamesPerPair: 1, courts: 2, maxTeams: null },
+            config: { gamesPerPair: 1, maxTeams: null },
             teams: [
               { id: 't1', player1: { id: 'p1', name: 'A' }, player2: { id: 'p2', name: 'B' } },
               { id: 't2', player1: { id: 'p5', name: 'C' }, player2: { id: 'p6', name: 'D' } },
@@ -1688,7 +1699,7 @@ describe('OngoingService', () => {
     const OPEN_EVENT = {
       ...EVENT_ROW,
       date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-      config: { gamesPerPair: 1, courts: 2, maxTeams: null },
+      config: { gamesPerPair: 1, maxTeams: null },
       teams: [],
     };
 
@@ -1807,7 +1818,7 @@ describe('OngoingService', () => {
       date: future,
       createdByUserId: 'user-1',
       createdByUser: { id: 'user-1', name: 'Ann Organiser' },
-      config: { gamesPerPair: 1, courts: 1, maxTeams: null, visibility: 'public', allowSoloRegistration: false },
+      config: { gamesPerPair: 1, maxTeams: null, visibility: 'public', allowSoloRegistration: false },
       teams: [team],
       soloPlayers: [],
       games: [],
@@ -1853,9 +1864,7 @@ describe('OngoingService', () => {
     // Full tournaments stay listed on purpose: the calendar shows them with registration disabled and
     // a "no spots left" note, rather than making a filled-up tournament vanish from the page.
     it('still lists a tournament that is full', async () => {
-      prisma.ongoingEvent.findMany = jest.fn(
-        async () => [row({ config: { gamesPerPair: 1, courts: 1, maxTeams: 1 } })] as any,
-      );
+      prisma.ongoingEvent.findMany = jest.fn(async () => [row({ config: { gamesPerPair: 1, maxTeams: 1 } })] as any);
 
       const result = await service.findOpen();
 
@@ -1903,7 +1912,7 @@ describe('OngoingService', () => {
               id: 'e',
               name: 'n',
               date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-              config: { gamesPerPair: 1, courts: 1, maxTeams: null },
+              config: { gamesPerPair: 1, maxTeams: null },
               teams: [],
               soloPlayers: [],
               games: [playedGame],
@@ -1919,7 +1928,7 @@ describe('OngoingService', () => {
           ({
             id: 'event-1',
             date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-            config: { gamesPerPair: 1, courts: 2, maxTeams: null },
+            config: { gamesPerPair: 1, maxTeams: null },
             teams: [],
           } as any),
       );
@@ -1952,7 +1961,6 @@ describe('OngoingService', () => {
       const args = (prisma.ongoingEvent.create as jest.Mock).mock.calls[0][0];
       expect(args.data.config.create).toEqual({
         gamesPerPair: 1,
-        courts: 1,
         maxTeams: 8,
         scheme: 'roundRobin',
         groupCount: 1,
@@ -2276,7 +2284,6 @@ describe('OngoingService', () => {
             ...EVENT_ROW,
             config: {
               gamesPerPair: 1,
-              courts: 2,
               maxTeams: null,
               scheme: 'groupsPlayoff',
               groupCount: 2,
@@ -2301,7 +2308,6 @@ describe('OngoingService', () => {
             ...EVENT_ROW,
             config: {
               gamesPerPair: 1,
-              courts: 2,
               maxTeams: null,
               scheme: 'groupsPlayoff',
               groupCount: 2,
@@ -2331,7 +2337,6 @@ describe('OngoingService', () => {
             ...EVENT_ROW,
             config: {
               gamesPerPair: 1,
-              courts: 2,
               maxTeams: null,
               scheme: 'roundRobin',
               groupCount: 1,
@@ -2354,7 +2359,6 @@ describe('OngoingService', () => {
             ...EVENT_ROW,
             config: {
               gamesPerPair: 1,
-              courts: 2,
               maxTeams: null,
               scheme: 'groupsPlayoff',
               groupCount: 2,
@@ -2412,7 +2416,6 @@ describe('OngoingService', () => {
       ...EVENT_ROW,
       config: {
         gamesPerPair: 1,
-        courts: 1,
         maxTeams: null,
         scheme: 'groupsPlayoff',
         groupCount: 2,
@@ -2433,7 +2436,6 @@ describe('OngoingService', () => {
             ...EVENT_ROW,
             config: {
               gamesPerPair: 1,
-              courts: 1,
               maxTeams: null,
               scheme: 'roundRobin',
               groupCount: 1,
@@ -2632,7 +2634,6 @@ describe('OngoingService', () => {
       ...EVENT_ROW,
       config: {
         gamesPerPair: 1,
-        courts: 1,
         maxTeams: null,
         scheme: 'groupsPlayoff',
         groupCount: 1,
@@ -2698,7 +2699,6 @@ describe('OngoingService', () => {
       ...EVENT_ROW,
       config: {
         gamesPerPair: 1,
-        courts: 1,
         maxTeams: null,
         scheme: 'groupsPlayoff',
         groupCount: 1,
@@ -3732,7 +3732,6 @@ describe('OngoingService fullRotation', () => {
     createdByUserId: 'user-1',
     config: {
       gamesPerPair: 1,
-      courts: 1,
       maxTeams: null,
       scheme: 'fullRotation',
       groupCount: 2,
@@ -3767,6 +3766,10 @@ describe('OngoingService fullRotation', () => {
         deleteMany: jest.fn(async () => ({ count: 0 })),
       },
       ongoingEventConfig: { upsert: jest.fn(async () => ({})) },
+      ongoingCourt: {
+        deleteMany: jest.fn(async () => ({ count: 0 })),
+        createMany: jest.fn(async () => ({ count: 1 })),
+      },
       player: { findMany: jest.fn(async (args: any) => args.where.id.in.map((id: string) => ({ id }))) },
       $transaction: jest.fn(),
     };
@@ -4073,7 +4076,6 @@ describe('OngoingService fullRotation config', () => {
     createdByUserId: 'user-1',
     config: {
       gamesPerPair: 1,
-      courts: 1,
       maxTeams: null,
       scheme: 'roundRobin',
       groupCount: 1,
@@ -4096,6 +4098,10 @@ describe('OngoingService fullRotation config', () => {
         create: jest.fn(async () => eventRow()),
       },
       ongoingEventConfig: { upsert: jest.fn(async () => ({})) },
+      ongoingCourt: {
+        deleteMany: jest.fn(async () => ({ count: 0 })),
+        createMany: jest.fn(async () => ({ count: 1 })),
+      },
       ongoingTeam: { deleteMany: jest.fn(async () => ({ count: 0 })), createMany: jest.fn() },
       ongoingGame: { deleteMany: jest.fn(async () => ({ count: 0 })), count: jest.fn(async () => 0) },
       ongoingSoloPlayer: { deleteMany: jest.fn(async () => ({ count: 0 })) },
@@ -4581,7 +4587,6 @@ describe('OngoingService.finishTournament — fullRotation', () => {
     createdByUserId: 'organiser-1',
     config: {
       gamesPerPair: 1,
-      courts: 1,
       maxTeams: null,
       scheme: 'fullRotation',
       groupCount: 2,
@@ -4942,7 +4947,6 @@ describe('OngoingService solo-only registration and rule toggles', () => {
     finishedAt: null,
     config: {
       gamesPerPair: 1,
-      courts: 1,
       maxTeams: null,
       scheme: 'roundRobin',
       groupCount: 1,
@@ -4968,6 +4972,10 @@ describe('OngoingService solo-only registration and rule toggles', () => {
         create: jest.fn(async () => eventRow()),
       },
       ongoingEventConfig: { upsert: jest.fn(async () => ({})) },
+      ongoingCourt: {
+        deleteMany: jest.fn(async () => ({ count: 0 })),
+        createMany: jest.fn(async () => ({ count: 1 })),
+      },
       ongoingTeam: { create: jest.fn(async () => ({})), deleteMany: jest.fn(), createMany: jest.fn() },
       ongoingGame: { deleteMany: jest.fn(), count: jest.fn(async () => 0) },
       ongoingSoloPlayer: { deleteMany: jest.fn(), create: jest.fn(async () => ({})) },
@@ -5161,7 +5169,6 @@ describe('OngoingService disbandTeams', () => {
     finishedAt: null,
     config: {
       gamesPerPair: 1,
-      courts: 1,
       maxTeams: null,
       scheme: 'roundRobin',
       groupCount: 1,
@@ -5299,5 +5306,290 @@ describe('OngoingService disbandTeams', () => {
 
     expect(prisma.$transaction).not.toHaveBeenCalled();
     expect(result.teams).toEqual([]);
+  });
+});
+
+describe('OngoingService courts', () => {
+  let service: OngoingService;
+  let prisma: any;
+
+  const ORGANISER = { sub: 'user-1', email: 'user1@example.com', role: 'admin', jti: 'jti-1', iat: 0, exp: 0 };
+
+  const courtRow = (position: number, label: string, fromRound = 1, toRound: number | null = null) => ({
+    id: `c${position}`,
+    eventId: 'event-1',
+    position,
+    label,
+    fromRound,
+    toRound,
+  });
+
+  const team = (id: string) => ({
+    id,
+    player1: { id: `${id}a`, name: `${id}a`, playerStats: { rank: 1000 } },
+    player2: { id: `${id}b`, name: `${id}b`, playerStats: { rank: 1000 } },
+    groupIndex: 0,
+    createdAt: new Date('2026-09-01T00:00:00.000Z'),
+  });
+
+  const fixture = (
+    id: string,
+    team1Id: string,
+    team2Id: string,
+    round: number,
+    court: number,
+    points?: [number, number],
+  ) => ({
+    id,
+    eventId: 'event-1',
+    team1Id,
+    team2Id,
+    team1Points: points ? points[0] : null,
+    team2Points: points ? points[1] : null,
+    round,
+    court,
+    order: court - 1,
+    phase: 'group',
+    groupIndex: null,
+    bracketRound: null,
+    bracketSlot: null,
+    thirdPlace: false,
+    sidePlayers: [],
+  });
+
+  const SCHEDULE = [
+    fixture('g1', 't1', 't2', 1, 1),
+    fixture('g2', 't3', 't4', 1, 2),
+    fixture('g3', 't1', 't3', 2, 1),
+    fixture('g4', 't2', 't4', 2, 2),
+    fixture('g5', 't1', 't4', 3, 1),
+    fixture('g6', 't2', 't3', 3, 2),
+  ];
+
+  const eventRow = (overrides: Record<string, unknown> = {}, config: Record<string, unknown> = {}) => ({
+    id: 'event-1',
+    name: 'Cup',
+    date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    startTime: null,
+    createdAt: new Date('2026-09-01T00:00:00.000Z'),
+    updatedAt: new Date('2026-09-01T00:00:00.000Z'),
+    createdByUserId: 'user-1',
+    finishedAt: null,
+    courts: [courtRow(1, '5'), courtRow(2, '7')],
+    config: {
+      gamesPerPair: 1,
+      maxTeams: null,
+      scheme: 'roundRobin',
+      groupCount: 1,
+      qualifiersPerGroup: null,
+      rotationRounds: 3,
+      visibility: 'public',
+      allowSoloRegistration: false,
+      soloOnlyRegistration: false,
+      hiddenRules: [],
+      ...config,
+    },
+    teams: ['t1', 't2', 't3', 't4'].map(team),
+    soloPlayers: [],
+    games: SCHEDULE,
+    rotationSlots: [],
+    ...overrides,
+  });
+
+  const courtsWritten = () => prisma.ongoingCourt.createMany.mock.calls[0]?.[0].data;
+  const gamesWritten = () => prisma.ongoingGame.createMany.mock.calls[0]?.[0].data;
+  const saveCourts = (courts: unknown, config: Record<string, unknown> = {}) =>
+    service.updateConfig('event-1', { gamesPerPair: 1, scheme: 'roundRobin', courts, ...config } as any, ORGANISER);
+
+  beforeEach(async () => {
+    prisma = {
+      ongoingEvent: {
+        findUnique: jest.fn(async () => eventRow()),
+        create: jest.fn(async () => eventRow()),
+      },
+      ongoingEventConfig: { upsert: jest.fn(async () => ({})) },
+      ongoingCourt: {
+        deleteMany: jest.fn(async () => ({ count: 2 })),
+        createMany: jest.fn(async () => ({ count: 2 })),
+      },
+      ongoingGame: {
+        count: jest.fn(async () => 0),
+        deleteMany: jest.fn(async () => ({ count: 6 })),
+        createMany: jest.fn(async () => ({ count: 6 })),
+      },
+      ongoingTeam: { update: jest.fn(async () => ({})) },
+      player: { findMany: jest.fn(async (args: any) => args.where.id.in.map((id: string) => ({ id }))) },
+      $transaction: jest.fn(),
+    };
+    prisma.$transaction = jest.fn(async (cb: any) => cb(prisma));
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        OngoingService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: UserService, useValue: { findById: jest.fn() } },
+      ],
+    }).compile();
+
+    service = module.get<OngoingService>(OngoingService);
+  });
+
+  it('returns the courts in fill order with their rounds', async () => {
+    prisma.ongoingEvent.findUnique = jest.fn(async () =>
+      eventRow({ courts: [courtRow(1, '5'), courtRow(2, '7'), courtRow(3, '9', 1, 4)] }),
+    );
+
+    const event = await service.findOne('event-1');
+
+    expect(event.config.courts).toEqual([
+      { label: '5', fromRound: 1, toRound: null },
+      { label: '7', fromRound: 1, toRound: null },
+      { label: '9', fromRound: 1, toRound: 4 },
+    ]);
+  });
+
+  it('writes the list with positions in the organiser’s order', async () => {
+    prisma.ongoingEvent.findUnique = jest.fn(async () => eventRow({ games: [] }));
+
+    await saveCourts([{ label: '9', toRound: 4 }, { label: '5' }, { label: '7' }]);
+
+    expect(prisma.ongoingCourt.deleteMany).toHaveBeenCalledWith({ where: { eventId: 'event-1' } });
+    expect(courtsWritten()).toEqual([
+      { eventId: 'event-1', position: 1, label: '9', fromRound: 1, toRound: 4 },
+      { eventId: 'event-1', position: 2, label: '5', fromRound: 1, toRound: null },
+      { eventId: 'event-1', position: 3, label: '7', fromRound: 1, toRound: null },
+    ]);
+  });
+
+  it('leaves the courts alone when the request does not mention them', async () => {
+    await service.updateConfig('event-1', { gamesPerPair: 1, scheme: 'roundRobin' } as any, ORGANISER);
+
+    expect(prisma.ongoingCourt.createMany).not.toHaveBeenCalled();
+    expect(prisma.ongoingGame.createMany).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid list before writing anything', async () => {
+    await expect(saveCourts([{ label: 'A' }, { label: 'a' }])).rejects.toThrow(/unique/);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  describe('once a result is recorded', () => {
+    beforeEach(() => {
+      const played = [fixture('g1', 't1', 't2', 1, 1, [21, 15]), ...SCHEDULE.slice(1)];
+      prisma.ongoingEvent.findUnique = jest.fn(async () => eventRow({ games: played }));
+    });
+
+    // The venue swaps court 7 for court 8 mid-day: every card should just say 8.
+    it('still allows a rename, and keeps the schedule', async () => {
+      await saveCourts([{ label: '5' }, { label: '8' }]);
+
+      expect(courtsWritten().map((court: any) => court.label)).toEqual(['5', '8']);
+      expect(prisma.ongoingGame.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['adding a court', [{ label: '5' }, { label: '7' }, { label: '9' }]],
+      ['removing a court', [{ label: '5' }]],
+      ['changing a court’s rounds', [{ label: '5' }, { label: '7', toRound: 2 }]],
+      ['moving a court', [{ label: '7' }, { label: '5' }]],
+    ])('refuses %s', async (_change, courts) => {
+      await expect(saveCourts(courts)).rejects.toThrow('Once a result is recorded the courts can only be renamed');
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('before the first result', () => {
+    it('rebuilds the schedule on the new courts, in the same transaction', async () => {
+      await saveCourts([{ label: '5' }, { label: '7' }, { label: '9', toRound: 1 }]);
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.ongoingGame.deleteMany).toHaveBeenCalledWith({ where: { eventId: 'event-1' } });
+      const games = gamesWritten();
+      expect(games).toHaveLength(6);
+      // Court 3 exists only in round 1.
+      expect(games.filter((game: any) => game.court === 3).every((game: any) => game.round === 1)).toBe(true);
+    });
+
+    it('does not rebuild for a rename', async () => {
+      await saveCourts([{ label: 'A' }, { label: 'B' }]);
+
+      expect(prisma.ongoingGame.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('does not create a schedule that was never generated', async () => {
+      prisma.ongoingEvent.findUnique = jest.fn(async () => eventRow({ games: [] }));
+
+      await saveCourts([{ label: '5' }, { label: '7' }, { label: '9' }]);
+
+      expect(prisma.ongoingGame.createMany).not.toHaveBeenCalled();
+    });
+
+    it('refuses courts that cannot hold the fixtures, changing nothing', async () => {
+      // Six fixtures, one court for rounds 1–2 = two slots.
+      await expect(saveCourts([{ label: '5', toRound: 2 }])).rejects.toThrow('4 of 6 matches do not fit on the courts');
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+  });
+
+  it('generates a schedule on the stored courts', async () => {
+    prisma.ongoingEvent.findUnique = jest.fn(async () =>
+      eventRow({ games: [], courts: [courtRow(1, '5'), courtRow(2, '7', 2, null)] }),
+    );
+
+    await service.generateSchedule('event-1', ORGANISER);
+
+    const games = gamesWritten();
+    expect(games.filter((game: any) => game.round === 1).map((game: any) => game.court)).toEqual([1]);
+    expect(Math.max(...games.map((game: any) => game.court))).toBe(2);
+  });
+
+  it('turns an exhausted court list into a 400 when generating', async () => {
+    prisma.ongoingEvent.findUnique = jest.fn(async () => eventRow({ games: [], courts: [courtRow(1, '5', 1, 1)] }));
+
+    await expect(service.generateSchedule('event-1', ORGANISER)).rejects.toThrow(BadRequestException);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('creates an event with the organiser’s courts', async () => {
+    await service.create(
+      {
+        name: 'Cup',
+        date: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+        courts: [{ label: '5' }, { label: '7' }, { label: '9', toRound: 4 }],
+      } as any,
+      ORGANISER,
+    );
+
+    expect(prisma.ongoingEvent.create.mock.calls[0][0].data.courts).toEqual({
+      create: [
+        { position: 1, label: '5', fromRound: 1, toRound: null },
+        { position: 2, label: '7', fromRound: 1, toRound: null },
+        { position: 3, label: '9', fromRound: 1, toRound: 4 },
+      ],
+    });
+  });
+
+  it('refuses to create an event with an invalid court list', async () => {
+    await expect(
+      service.create(
+        { name: 'Cup', date: new Date(Date.now() + 86_400_000).toISOString(), courts: [] } as any,
+        ORGANISER,
+      ),
+    ).rejects.toThrow('courts must list at least one court');
+    expect(prisma.ongoingEvent.create).not.toHaveBeenCalled();
+  });
+
+  // Rotation schedules itself — one court per group — so a court edit must not rebuild it.
+  it('never rebuilds a full-rotation tournament', async () => {
+    prisma.ongoingEvent.findUnique = jest.fn(async () =>
+      eventRow(
+        { teams: [], games: SCHEDULE.map((game) => ({ ...game, phase: 'rotation' })) },
+        { scheme: 'fullRotation', groupCount: 2 },
+      ),
+    );
+
+    await saveCourts([{ label: '5' }, { label: '7' }, { label: '9' }], { scheme: 'fullRotation', groupCount: 2 });
+
+    expect(prisma.ongoingGame.createMany).not.toHaveBeenCalled();
   });
 });
